@@ -1,0 +1,87 @@
+# Flight sites. One entry per site; fill in centre and bbox after the first visit.
+# type is one of: built_distinct, built_repetitive, natural, water, sloped
+# imagery: path or URL of the open aerial imagery used for the map tile (ACTmapi for Canberra)
+# dem: path of the Geoscience Australia DEM tile covering the bbox
+
+tile:
+  size_m: 500          # tile side in metres
+  m_per_px: 1.0
+  rotation: random     # tiles are rotated per sample so T2b is not T1b
+
+flight_pattern:
+  altitudes_m: [20, 50, 90]
+  gimbal_pitch_deg: [-90, -45]
+  fps_kept: 2
+  visits_per_site: 2   # at different times of day
+
+sites:
+  - name: city_centre
+    type: built_distinct
+    centre: {lat: null, lon: null}
+    bbox: {min_lat: null, min_lon: null, max_lat: null, max_lon: null}
+    imagery: null
+    dem: null
+    notes: ""
+  - name: older_suburb
+    type: built_distinct
+    centre: {lat: null, lon: null}
+    bbox: {min_lat: null, min_lon: null, max_lat: null, max_lon: null}
+    imagery: null
+    dem: null
+    notes: ""
+  - name: campus
+    type: built_distinct
+    centre: {lat: null, lon: null}
+    bbox: {min_lat: null, min_lon: null, max_lat: null, max_lon: null}
+    imagery: null
+    dem: null
+    notes: ""
+  - name: industrial
+    type: built_distinct
+    centre: {lat: null, lon: null}
+    bbox: {min_lat: null, min_lon: null, max_lat: null, max_lon: null}
+    imagery: null
+    dem: null
+    notes: "Fyshwick or Hume"
+  - name: new_estate
+    type: built_repetitive
+    centre: {lat: null, lon: null}
+    bbox: {min_lat: null, min_lon: null, max_lat: null, max_lon: null}
+    imagery: null
+    dem: null
+    notes: "check imagery date; new estates drift from the tile"
+  - name: sports_fields
+    type: built_repetitive
+    centre: {lat: null, lon: null}
+    bbox: {min_lat: null, min_lon: null, max_lat: null, max_lon: null}
+    imagery: null
+    dem: null
+    notes: ""
+  - name: paddocks
+    type: natural
+    centre: {lat: null, lon: null}
+    bbox: {min_lat: null, min_lon: null, max_lat: null, max_lon: null}
+    imagery: null
+    dem: null
+    notes: "Majura; also the open field for tier 2 flights"
+  - name: bushland
+    type: natural
+    centre: {lat: null, lon: null}
+    bbox: {min_lat: null, min_lon: null, max_lat: null, max_lon: null}
+    imagery: null
+    dem: null
+    notes: ""
+  - name: lake_shore
+    type: water
+    centre: {lat: null, lon: null}
+    bbox: {min_lat: null, min_lon: null, max_lat: null, max_lon: null}
+    imagery: null
+    dem: null
+    notes: "bank in frame plus one pass over open water"
+  - name: hillside
+    type: sloped
+    centre: {lat: null, lon: null}
+    bbox: {min_lat: null, min_lon: null, max_lat: null, max_lon: null}
+    imagery: null
+    dem: null
+    notes: "foot of Mount Ainslie or Black Mountain; DEM correction test"

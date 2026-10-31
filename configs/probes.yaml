@@ -1,0 +1,41 @@
+# Probe targets, readout positions, prompts and splits. Scripts 20, 30, 31 read this.
+
+targets:
+  altitude:      {column: altitude_agl, encoding: log,     metric: [mae_m, r2]}
+  heading:       {column: yaw,          encoding: sincos,  metric: [angular_mae_deg]}
+  pitch:         {column: pitch,        encoding: scalar,  metric: [mae_deg]}
+  scene_xy:      {column: [x, y],       encoding: xy,      metric: [median_m]}
+  map_uv:        {column: [u, v],       encoding: xy,      metric: [median_m, frac_within_10m], needs_tile: true}
+  map_heading:   {column: yaw_rel_tile, encoding: sincos,  metric: [angular_mae_deg], needs_tile: true}
+  localisability:{column: localisability, encoding: scalar, metric: [r2, spearman], needs_tile: true}
+  self_error:    {column: map_uv_abs_error, encoding: scalar, metric: [auroc_high_error, spearman], derived: true}
+
+positions:
+  - img_mean          # mean over drone-view image tokens
+  - img_mean_view     # mean over drone-view tokens only when a tile is also in context
+  - last              # last prompt token
+
+prompts:
+  neutral:  "Describe the scene."
+  targeted:
+    altitude:      "The drone's altitude in metres is"
+    heading:       "The drone's heading in degrees from north is"
+    map_uv:        "The drone's position on the map, as (u, v) in [0, 1], is"
+    localisability:"How well does this view pin down the drone's position on the map, from 0 (not at all) to 100?"
+
+splits:
+  site_heldout:   {k_out: 3, stratify_by: site_type, rotations: 3, seed: 0}
+  within_site:    {train_quadrants: 3, seed: 0}
+  scene_heldout:  {k_out: 1, seed: 0}         # simulation slice only
+
+probe:
+  type: ridge
+  alphas: [0.01, 0.1, 1, 10, 100, 1000]
+  cv_folds: 5
+  standardise: true
+  bootstrap_n: 1000
+  mlp_check_best_layer: true
+
+controls: [pixel, vision_tower, random_init, shuffled]
+
+high_error_threshold_m: 10

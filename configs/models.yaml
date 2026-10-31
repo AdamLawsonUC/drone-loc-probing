@@ -1,0 +1,27 @@
+# Model registry. Scripts look models up by the short key.
+# hf_id for AeroVLA: fill in the exact HuggingFace repo id you identified (openvla-7b + LoRA, Apache 2.0).
+
+qwen2.5-vl-7b:
+  hf_id: Qwen/Qwen2.5-VL-7B-Instruct
+  family: qwen2_5_vl
+  dtype: bfloat16
+  role: M1 generic VLM; flight policy candidate
+
+qwen2.5-vl-3b:
+  hf_id: Qwen/Qwen2.5-VL-3B-Instruct
+  family: qwen2_5_vl
+  dtype: bfloat16
+  role: flight-server fallback if 7B misses 1 Hz
+
+aerovla:
+  hf_id: FILL_ME_IN/AeroVLA
+  family: openvla
+  dtype: bfloat16
+  trust_remote_code: true
+  role: M2 aerial VLA; offline only, never flies the Mini
+
+m3:
+  hf_id: checkpoints/m3        # produced by scripts/21_finetune_lora.py
+  family: qwen2_5_vl
+  dtype: bfloat16
+  role: M3 aerial-finetuned M1; flight policy candidate
