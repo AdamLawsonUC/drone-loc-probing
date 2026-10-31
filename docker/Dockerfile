@@ -7,7 +7,7 @@
 # Build:  docker build -t drone-loc-probing -f docker/Dockerfile .
 # Run:    docker/run_server.sh --dry-run            (see that script for the mounts)
 
-FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+FROM pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
