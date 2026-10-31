@@ -1,0 +1,48 @@
+{
+  "python": "3.14.3",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "gpu": {
+    "cuda": false,
+    "torch": "2.15.0+cpu",
+    "driver": "577.05"
+  },
+  "imports": {
+    "transformers": {
+      "ok": true,
+      "version": "5.22.1"
+    },
+    "accelerate": {
+      "ok": true,
+      "version": "1.15.0"
+    },
+    "nnsight": {
+      "ok": true,
+      "version": "0.8.1"
+    },
+    "sklearn": {
+      "ok": true,
+      "version": "1.9.1"
+    },
+    "fastapi": {
+      "ok": true,
+      "version": "0.162.0"
+    },
+    "uvicorn": {
+      "ok": true,
+      "version": "0.54.0"
+    },
+    "PIL": {
+      "ok": true,
+      "version": "12.2.0"
+    },
+    "yaml": {
+      "ok": true,
+      "version": "6.0.3"
+    },
+    "pandas": {
+      "ok": true,
+      "version": "3.0.2"
+    }
+  },
+  "models": []
+}
