@@ -1,0 +1,16 @@
+# torch and torchvision are installed first from the CUDA index that matches the A100 driver (see README).
+transformers>=4.51
+accelerate>=1.0
+qwen-vl-utils>=0.0.8
+nnsight>=0.4
+scikit-learn>=1.5
+numpy>=1.26
+pandas>=2.2
+pyyaml>=6.0
+pillow>=10.0
+tqdm>=4.66
+# flight server and client
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+requests>=2.31

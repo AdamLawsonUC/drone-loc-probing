@@ -1,0 +1,23 @@
+# environments
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# data that stays out of git (store on uni storage or Drive; the manifests ARE committed)
+data/frames/
+data/tiles/*.tif
+data/dem/*.tif
+flights/**/*.MP4
+flights/**/*.mp4
+activations/
+checkpoints/
+
+# run outputs: commit results CSVs selectively, never caches
+results/**/*.npy
+results/**/*.npz
+results/**/replay/*.mp4
+
+# secrets
+.env
+*.pem
