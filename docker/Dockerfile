@@ -1,8 +1,8 @@
 # Flight server and activation-extraction image for the university A100.
 #
-# The base image carries torch with CUDA 12.4, which needs an NVIDIA driver >= 550 on the host.
-# If `nvidia-smi` on the A100 shows an older driver, switch to pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime
-# and change the index URL in README for the laptop install to cu121.
+# The base image carries torch with CUDA 12.1, chosen for wolfgang (driver 530, CUDA 12.1 at most).
+# If the host driver is ever upgraded to 550+, pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime also works
+# (the laptop install picks its own CUDA tag from the README).
 #
 # Build:  docker build -t drone-loc-probing -f docker/Dockerfile .
 # Run:    docker/run_server.sh --dry-run            (see that script for the mounts)

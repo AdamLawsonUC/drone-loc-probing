@@ -1,0 +1,14 @@
+# Keep LF endings for everything that runs on Linux, whatever the checkout platform.
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.txt text eol=lf
+*.md text eol=lf
+Dockerfile text eol=lf
+*.jpg binary
+*.png binary
+*.MP4 binary
+*.npz binary
+*.npy binary
