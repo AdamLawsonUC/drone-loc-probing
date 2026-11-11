@@ -5,8 +5,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
+GPU="${GPU:-1}"   # wolfgang: 0 = A30 24 GB, 1 = A100 40 GB (check with nvidia-smi -L)
 mkdir -p "$HF_CACHE"
-exec docker run --rm -it --gpus all \
+exec docker run --rm -it --gpus "device=${GPU}" \
   -v "$(pwd):/work" \
   -v "${HF_CACHE}:/hf" \
   -e HF_TOKEN="${HF_TOKEN:-}" \
