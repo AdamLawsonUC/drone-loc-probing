@@ -10,6 +10,7 @@ GPU="${GPU:-1}"   # wolfgang: 0 = A30 24 GB, 1 = A100 40 GB (check with nvidia-s
 PORT="${PORT:-8765}"
 mkdir -p "$HF_CACHE"
 exec docker run --rm -it --gpus "device=${GPU}" \
+  --user "$(id -u):$(id -g)" -e HOME=/tmp \
   -p "${PORT}:8765" \
   -v "$(pwd):/work" \
   -v "${HF_CACHE}:/hf" \

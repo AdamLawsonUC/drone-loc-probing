@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ffmpeg libg
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install -r /tmp/requirements.txt
 
+RUN git config --system --add safe.directory /work
 WORKDIR /work
 EXPOSE 8765
 

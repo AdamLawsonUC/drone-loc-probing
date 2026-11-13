@@ -1,0 +1,63 @@
+{
+  "python": "3.11.10",
+  "platform": "Linux-5.4.0-244-generic-x86_64-with-glibc2.35",
+  "gpu": {
+    "cuda": true,
+    "torch": "2.5.1+cu121",
+    "device": "NVIDIA A100-PCIE-40GB",
+    "memory_gb": 39.4,
+    "cuda_build": "12.1",
+    "bf16": true,
+    "driver": "530.30.02"
+  },
+  "imports": {
+    "transformers": {
+      "ok": true,
+      "version": "4.57.6"
+    },
+    "accelerate": {
+      "ok": true,
+      "version": "1.15.0"
+    },
+    "nnsight": {
+      "ok": true,
+      "version": "0.8.2"
+    },
+    "sklearn": {
+      "ok": true,
+      "version": "1.9.1"
+    },
+    "fastapi": {
+      "ok": true,
+      "version": "0.162.4"
+    },
+    "uvicorn": {
+      "ok": true,
+      "version": "0.54.0"
+    },
+    "PIL": {
+      "ok": true,
+      "version": "10.2.0"
+    },
+    "yaml": {
+      "ok": true,
+      "version": "6.0.2"
+    },
+    "pandas": {
+      "ok": true,
+      "version": "3.1.1"
+    }
+  },
+  "models": [
+    {
+      "model": "qwen2.5-vl-7b",
+      "status": "ok",
+      "layer_list": "model.language_model.layers",
+      "n_layers": 28,
+      "hidden": 3584,
+      "load_s": 83.8,
+      "forward_s": 0.133,
+      "device": "cuda"
+    }
+  ]
+}

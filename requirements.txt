@@ -1,5 +1,5 @@
 # torch and torchvision are installed first from the CUDA index that matches the A100 driver (see README).
-transformers>=4.51
+transformers>=4.51,<5    # 5.x needs torch >= 2.6; the cu121 image has 2.5.1
 accelerate>=1.0
 qwen-vl-utils>=0.0.8
 nnsight>=0.4
