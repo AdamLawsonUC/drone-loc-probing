@@ -15,6 +15,8 @@ activations/    <model>/<split>/layer_XX_<position>.npy                         
 results/        <run_id>/ ... every script writes here, never elsewhere
 figures/        one file per paper figure
 docker/         Dockerfile and run scripts for the A100
+android/        the "Probe flight" screen for the DJI MSDK app, as source files and one patch
+docs/           hardware_bringup.md: the test order from server check to outdoor flight
 ```
 
 ## Phase 0 quick start (laptop or A100, no Docker)
@@ -43,6 +45,11 @@ python scripts/client_latency_test.py --server http://<a100-host>:8765 --image t
 python scripts/80_flight_server.py --model qwen2.5-vl-7b --port 8765
 ```
 
+Hardware bring-up, stage by stage, is in `docs/hardware_bringup.md`; the app side is in `android/README.md`.
+Other policies for testing without the model: `--policy pattern` (climb, hold, descend, hold in turn) and
+`--policy baro` (holds the target altitude from telemetry). `--config configs/flight_indoor.yaml` selects the
+indoor envelope and `--save-frames` keeps every frame received.
+
 Endpoints: `GET /health`, `POST /act` (multipart `image`, optional `instruction`, optional `telemetry` JSON),
 `POST /steer` (`{"delta": 30.0}` shifts the probe readout by that much in its own units; `0` disables).
 Every `/act` call is appended to `flights/<session>/commands.csv`.
@@ -58,7 +65,16 @@ docker/run_server.sh --model qwen2.5-vl-7b          # real
 The container mounts the repo at `/work` and the Hugging Face cache at `/hf`, so code edits and downloaded
 weights never require a rebuild.
 
-## Manifest columns (real and sim share them)
+## Probes (after flights)
+
+```
+docker/run.sh scripts/20_extract_activations.py --model qwen2.5-vl-7b --manifest data/manifest_real.csv --positions img_mean last --prompts neutral targeted --out activations/
+python scripts/30_train_probes.py --acts activations/qwen2.5-vl-7b --targets altitude heading pitch --split site_heldout --out results/
+python scripts/31_baselines.py --manifest data/manifest_real.csv --acts activations/ --probes_run results/<run_id> --out results/
+python tests/smoke_phase1.py      # checks 30 and 31 on synthetic data, no GPU needed
+```
+
+## Manifest columns
 
 frame_id, site_or_scene, source (real|sim), split, flight_id, timestamp, x, y, altitude_agl, altitude_baro,
 yaw, pitch, lat, lon, tile_id, tile_rotation, u, v, yaw_rel_tile, localisability, sun_azimuth, ground_class

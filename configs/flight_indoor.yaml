@@ -1,0 +1,31 @@
+# Indoor bring-up envelope for the flight server. Same keys as flight.yaml; use it with
+#   docker/run_server.sh --config configs/flight_indoor.yaml --policy pattern
+# and pick "Indoor" in the app. The app refuses to start if its preset and this envelope disagree.
+#
+# Heights are relative to take-off. Set ceiling_m at least 1 m below the lowest thing above the drone.
+
+envelope:
+  floor_m: 0.8
+  ceiling_m: 2.2
+  max_vertical_mps: 0.2
+  command_rate_hz: 1.0
+  hold_on_stale_s: 3.0
+
+policy:
+  target_altitude_m: 1.5
+  action_vocab: [climb, hold, descend]
+  prompt: >-
+    You are the autopilot of a small drone flying indoors. Your task is to hold a height of {target_altitude_m}
+    metres above the floor. Look at the camera image and reply with exactly one word: climb, hold, or descend.
+  max_new_tokens: 4
+  image_max_side_px: 448
+
+steering:
+  enabled: false
+  target: altitude
+  layer: null
+  delta: 0.0
+  positions: all
+
+logging:
+  session_dir: flights

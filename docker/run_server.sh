@@ -3,6 +3,8 @@
 #   docker/run_server.sh --dry-run
 #   docker/run_server.sh --model qwen2.5-vl-7b
 #   docker/run_server.sh --model qwen2.5-vl-7b --probes results/<run>/probes --steer altitude
+#   docker/run_server.sh --policy pattern --config configs/flight_indoor.yaml --save-frames   # indoor bring-up
+#   FLIGHT_TOKEN=<secret> docker/run_server.sh ...     # the app must then send the same token
 set -euo pipefail
 cd "$(dirname "$0")/.."
 HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
@@ -15,6 +17,7 @@ exec docker run --rm -it --gpus "device=${GPU}" \
   -v "$(pwd):/work" \
   -v "${HF_CACHE}:/hf" \
   -e HF_TOKEN="${HF_TOKEN:-}" \
+  -e FLIGHT_TOKEN="${FLIGHT_TOKEN:-}" \
   --name drone-loc-server \
   drone-loc-probing \
   python scripts/80_flight_server.py --port 8765 "$@"
