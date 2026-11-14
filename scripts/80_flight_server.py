@@ -216,7 +216,9 @@ class Server:
             elif action == "descend" and alt <= env["floor_m"]:
                 action, note = "hold", "at_floor"
         if action != "hold":
-            min_gap = 0.8 / env["command_rate_hz"]   # 20% slack so a client looping at exactly the rate is not refused
+            # Half a period: the app already sends one request per period and lets a command expire after two.
+            # A tighter gap refused genuine commands whenever network jitter bunched two requests (seen 14 Nov).
+            min_gap = 0.5 / env["command_rate_hz"]
             if time.time() - self.last_cmd_time < min_gap:
                 action, note = "hold", "rate_limited"
             else:

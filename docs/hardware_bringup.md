@@ -52,7 +52,8 @@ docker/run_server.sh --policy pattern --config configs/flight_indoor.yaml --save
 App: Indoor, stick commands OFF, Start. Let it run a minute, Stop.
 Pass: one line a second in the app, the action cycling climb, hold, descend, hold; `flights/bench01/commands.csv`
 has one row per line with altitude, heading and gimbal pitch filled in; `flights/bench01/frames/` has the images.
-Move the gimbal and turn the drone by hand and check the logged pitch and heading follow.
+Turn the drone by hand and tilt the camera with the gimbal wheel on the controller (the gimbal resists being
+pushed by hand), then check the logged heading and pitch follow.
 Keep: `flights/bench01/` (it has `session.json` with the config and git hash).
 
 ## Stage 4: bench loop with Qwen (latency)
