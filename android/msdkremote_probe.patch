@@ -1,16 +1,17 @@
 diff --git a/MSDKRemote/app/src/main/AndroidManifest.xml b/MSDKRemote/app/src/main/AndroidManifest.xml
-index 4ec47eb..fb8f829 100644
+index 4ec47eb..ac2b9e9 100644
 --- a/MSDKRemote/app/src/main/AndroidManifest.xml
 +++ b/MSDKRemote/app/src/main/AndroidManifest.xml
-@@ -34,6 +34,7 @@
+@@ -34,6 +34,8 @@
          android:roundIcon="@mipmap/ic_launcher_round"
          android:supportsRtl="true"
          android:theme="@style/Theme.MSDKRemote"
 +        android:usesCleartextTraffic="true"
++        tools:replace="android:usesCleartextTraffic"
          tools:targetApi="31">
  
          <activity
-@@ -46,6 +47,12 @@
+@@ -46,6 +48,12 @@
              android:exported="false"
              android:screenOrientation="portrait" />
  

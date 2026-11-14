@@ -26,8 +26,9 @@ Then build and run from Android Studio as usual. The patch was made against Dron
 If the patch does not apply (a fork that has moved on), do it by hand:
 
 1. Copy the three files in `probe/` to `MSDKRemote/app/src/main/java/com/msdkremote/probe/`.
-2. `AndroidManifest.xml`: add `android:usesCleartextTraffic="true"` to `<application>` (the server speaks plain
-   HTTP), and declare the activity:
+2. `AndroidManifest.xml`: add `android:usesCleartextTraffic="true"` and
+   `tools:replace="android:usesCleartextTraffic"` to `<application>` (the server speaks plain HTTP, and the DJI
+   SDK's own manifest sets the attribute to false, so the merge fails without the replace), and declare the activity:
    `<activity android:name=".probe.ProbeFlightActivity" android:exported="false" android:screenOrientation="portrait" />`
 3. `MainActivity.java`: add
    `public void StartProbeFlightActivity(View view) { startActivity(new Intent(this, com.msdkremote.probe.ProbeFlightActivity.class)); }`
@@ -48,5 +49,5 @@ If the patch does not apply (a fork that has moved on), do it by hand:
   (Android Studio: Device Explorer). The server keeps its own log in `flights/<session>/`.
 
 Status: type-checked against stub versions of the Android and DJI APIs and exercised against the real server
-with the same request format; not yet built in Android Studio or run on a phone. See
+with the same request format; first Android Studio build on 14 Nov 2026 found the manifest merge conflict fixed above. See
 `docs/hardware_bringup.md` for the test order.
