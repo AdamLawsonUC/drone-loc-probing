@@ -10,6 +10,7 @@ data/tiles/*.tif
 data/dem/*.tif
 flights/**/*.MP4
 flights/**/*.mp4
+flights/**/frames/
 activations/
 checkpoints/
 

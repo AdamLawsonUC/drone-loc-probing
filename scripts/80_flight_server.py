@@ -3,19 +3,29 @@
 
 Usage:
   python scripts/80_flight_server.py --dry-run --port 8765                 # no model; measures the network path
+  python scripts/80_flight_server.py --policy pattern --port 8765          # no model; climb, hold, descend, hold in turn
+  python scripts/80_flight_server.py --policy baro --port 8765             # no model; holds the target on telemetry
   python scripts/80_flight_server.py --model qwen2.5-vl-7b --port 8765     # real policy
   python scripts/80_flight_server.py --model qwen2.5-vl-7b --probes results/<run>/probes/ --steer altitude
+  add --config configs/flight_indoor.yaml for the indoor envelope, --save-frames to keep every frame received
 
 Endpoints
-  GET  /health                       -> {"status", "model", "steer_delta", "uptime_s"}
+  GET  /health                       -> {"status", "model", "steer_delta", "uptime_s", "session", "server_time",
+                                         "envelope"}. server_time lets the app express its timestamps on the
+                                         server clock; envelope lets the app check it agrees before flying.
   POST /act                          multipart: image (jpeg/png), instruction (optional), telemetry (JSON string,
-                                     optional: {"rel_alt": m, "yaw": deg, "ts": s})
+                                     optional: {"ts": s on the server clock, "seq": n, "rel_alt": m, "yaw": deg,
+                                     "gimbal_pitch": deg, "lat": deg, "lon": deg, "sats": n, ...})
                                      -> {"action", "vertical_mps", "raw_text", "probe_readout", "steer_delta",
-                                         "server_ms", "frame_ms", "session"}
+                                         "server_ms", "frame_ms", "session", "note"}
   POST /steer                        json {"delta": float}   shifts the probe readout by delta; 0 disables
 
-Every /act call is appended to flights/<session>/commands.csv. The envelope in configs/flight.yaml is enforced
-here as well as in the app: no climb above the ceiling, no descend below the floor, hold on stale frames.
+If the environment variable FLIGHT_TOKEN is set, /act and /steer require the header X-Flight-Token with that value.
+
+Every /act call is appended to flights/<session>/commands.csv, with the full telemetry the app sent. With
+--save-frames each image is also written to flights/<session>/frames/<seq>.jpg, so a session doubles as labelled
+data (image, relative altitude, heading, gimbal pitch, GPS). The envelope in the config is enforced here as well
+as in the app: no climb above the ceiling, no descend below the floor, hold on stale frames.
 
 Steering: with --probes and --steer <target>, the ridge direction w from <probes>/<model>_<target>_L<layer>_*.npz
 is added to the residual stream at the chosen layer as delta * w / (w.w), which shifts a linear probe's readout
@@ -48,8 +58,41 @@ ACTIONS = ("climb", "hold", "descend")
 class DryRunPolicy:
     name = "dry-run"
 
-    def act(self, image: Image.Image, instruction: str) -> tuple[str, Optional[float]]:
+    def act(self, image: Image.Image, instruction: str, telemetry: Optional[dict] = None) -> tuple[str, Optional[float]]:
         return "hold", None
+
+
+class PatternPolicy:
+    """No model. Cycles climb, hold, descend, hold, a few seconds each, to prove the actuation path and its sign.
+    The envelope still applies, so the drone stays between the floor and the ceiling."""
+    name = "pattern"
+
+    def __init__(self, phase_s: float = 4.0):
+        self.phase_s = phase_s
+        self.t0 = None
+
+    def act(self, image: Image.Image, instruction: str, telemetry: Optional[dict] = None) -> tuple[str, Optional[float]]:
+        if self.t0 is None:
+            self.t0 = time.time()
+        k = int((time.time() - self.t0) / self.phase_s) % 4
+        return ("climb", "hold", "descend", "hold")[k], None
+
+
+class BaroPolicy:
+    """No model. Holds the target altitude from the telemetry's rel_alt with a dead band. This is the
+    controller-in-the-loop reference: it shows what the 1 Hz loop and the envelope can do when the altitude
+    estimate is perfect, which is the bar the VLM policy is compared against."""
+    name = "baro"
+
+    def __init__(self, target_m: float, band_m: float = 0.5):
+        self.target, self.band = target_m, band_m
+
+    def act(self, image: Image.Image, instruction: str, telemetry: Optional[dict] = None) -> tuple[str, Optional[float]]:
+        alt = (telemetry or {}).get("rel_alt")
+        if alt is None:
+            return "hold", None
+        err = self.target - float(alt)
+        return ("climb" if err > self.band else "descend" if err < -self.band else "hold"), None
 
 
 class SteeringHook:
@@ -121,7 +164,7 @@ class QwenPolicy:
         if self.hook is not None:
             self.hook.delta = float(delta)
 
-    def act(self, image: Image.Image, instruction: str) -> tuple[str, Optional[float]]:
+    def act(self, image: Image.Image, instruction: str, telemetry: Optional[dict] = None) -> tuple[str, Optional[float]]:
         import torch
         side = self.cfg["policy"]["image_max_side_px"]
         image.thumbnail((side, side))
@@ -138,16 +181,23 @@ class QwenPolicy:
 
 # ----------------------------------------------------------------------------------------------- server
 class Server:
-    def __init__(self, policy, cfg: dict, session: str):
+    def __init__(self, policy, cfg: dict, session: str, save_frames: bool = False, token: str = ""):
         self.policy = policy
         self.cfg = cfg
         self.session = session
+        self.token = token
+        self.n_calls = 0
         self.t_start = time.time()
         self.last_cmd_time = 0.0
         self.lock = threading.Lock()
         self.log_path = common.ensure_dir(common.ROOT / cfg["logging"]["session_dir"] / session) / "commands.csv"
+        self.frames_dir = common.ensure_dir(self.log_path.parent / "frames") if save_frames else None
         if not self.log_path.exists():
-            self.log_path.write_text("timestamp,frame_ts,rel_alt,raw_text,action,vertical_mps,probe_readout,steer_delta,server_ms,frame_ms,note\n")
+            self.log_path.write_text("timestamp,frame_ts,rel_alt,raw_text,action,vertical_mps,probe_readout,steer_delta,"
+                                     "server_ms,frame_ms,note,seq,yaw,gimbal_pitch,lat,lon,sats,frame_file,telemetry_json\n")
+        common.dump_json(self.log_path.parent / "session.json", {
+            "session": session, "policy": policy.name, "config": cfg, "git_hash": common.git_hash(short=False),
+            "command": " ".join(sys.argv), "started": dt.datetime.now().isoformat(timespec="seconds")})
 
     def parse_action(self, raw: str) -> str:
         m = re.search(r"\b(climb|hold|descend)\b", raw.lower())
@@ -166,7 +216,7 @@ class Server:
             elif action == "descend" and alt <= env["floor_m"]:
                 action, note = "hold", "at_floor"
         if action != "hold":
-            min_gap = 1.0 / env["command_rate_hz"]
+            min_gap = 0.8 / env["command_rate_hz"]   # 20% slack so a client looping at exactly the rate is not refused
             if time.time() - self.last_cmd_time < min_gap:
                 action, note = "hold", "rate_limited"
             else:
@@ -178,7 +228,13 @@ class Server:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         instr = instruction or self.cfg["policy"]["prompt"].format(**self.cfg["policy"])
         with self.lock:
-            raw, readout = self.policy.act(img, instr)
+            self.n_calls += 1
+            seq = telemetry.get("seq", self.n_calls)
+            frame_file = ""
+            if self.frames_dir is not None:
+                frame_file = f"frames/{int(seq):06d}.jpg" if str(seq).lstrip("-").isdigit() else f"frames/n{self.n_calls:06d}.jpg"
+                (self.log_path.parent / frame_file).write_bytes(image_bytes)
+            raw, readout = self.policy.act(img, instr, telemetry)
             action = self.parse_action(raw)
             action, note = self.apply_envelope(action, telemetry)
         v = self.cfg["envelope"]["max_vertical_mps"]
@@ -188,7 +244,9 @@ class Server:
         delta = getattr(getattr(self.policy, "hook", None), "delta", 0.0)
         row = [dt.datetime.now().isoformat(timespec="milliseconds"), telemetry.get("ts"), telemetry.get("rel_alt"),
                raw.replace("\n", " ").replace(",", ";"), action, vertical, readout, delta, round(server_ms, 1),
-               None if frame_ms is None else round(frame_ms, 1), note]
+               None if frame_ms is None else round(frame_ms, 1), note, seq, telemetry.get("yaw"),
+               telemetry.get("gimbal_pitch"), telemetry.get("lat"), telemetry.get("lon"), telemetry.get("sats"),
+               frame_file, json.dumps(telemetry, separators=(",", ":"))]
         with self.log_path.open("a", newline="") as f:
             csv.writer(f).writerow(row)
         return {"action": action, "vertical_mps": vertical, "raw_text": raw, "probe_readout": readout,
@@ -197,22 +255,31 @@ class Server:
 
 
 def build_app(server: Server):
-    from fastapi import FastAPI, File, Form, UploadFile
+    from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
     app = FastAPI(title="drone-loc-probing flight server")
+
+    def check(token: Optional[str]) -> None:
+        if server.token and token != server.token:
+            raise HTTPException(status_code=401, detail="missing or wrong X-Flight-Token")
 
     @app.get("/health")
     def health():
         return {"status": "ok", "model": server.policy.name,
                 "steer_delta": getattr(getattr(server.policy, "hook", None), "delta", 0.0),
-                "uptime_s": round(time.time() - server.t_start, 1), "session": server.session}
+                "uptime_s": round(time.time() - server.t_start, 1), "session": server.session,
+                "server_time": time.time(), "envelope": server.cfg["envelope"],
+                "target_altitude_m": server.cfg["policy"]["target_altitude_m"], "token_required": bool(server.token)}
 
     @app.post("/act")
-    async def act(image: UploadFile = File(...), instruction: Optional[str] = Form(None), telemetry: Optional[str] = Form(None)):
+    async def act(image: UploadFile = File(...), instruction: Optional[str] = Form(None), telemetry: Optional[str] = Form(None),
+                  x_flight_token: Optional[str] = Header(None)):
+        check(x_flight_token)
         tel = json.loads(telemetry) if telemetry else {}
         return server.handle(await image.read(), instruction, tel)
 
     @app.post("/steer")
-    def steer(body: dict):
+    def steer(body: dict, x_flight_token: Optional[str] = Header(None)):
+        check(x_flight_token)
         delta = float(body.get("delta", 0.0))
         if not hasattr(server.policy, "set_delta") or getattr(server.policy, "hook", None) is None:
             return {"ok": False, "reason": "no steering hook loaded (start with --probes and --steer)"}
@@ -226,6 +293,9 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default=None, help="key from configs/models.yaml")
     ap.add_argument("--dry-run", action="store_true", help="no model; returns hold, for latency tests")
+    ap.add_argument("--policy", default=None, choices=["dry-run", "pattern", "baro", "model"],
+                    help="default: model if --model is given, else dry-run")
+    ap.add_argument("--save-frames", action="store_true", help="write every received image to flights/<session>/frames/")
     ap.add_argument("--probes", type=Path, default=None, help="folder of probe .npz files")
     ap.add_argument("--steer", default=None, help="probe target to steer, e.g. altitude")
     ap.add_argument("--host", default="0.0.0.0")
@@ -236,12 +306,24 @@ def main() -> None:
 
     cfg = common.load_yaml(args.config)
     session = args.session or dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    if args.dry_run or not args.model:
-        policy = DryRunPolicy()
-    else:
+    kind = args.policy or ("dry-run" if (args.dry_run or not args.model) else "model")
+    if kind == "pattern":
+        policy = PatternPolicy()
+    elif kind == "baro":
+        policy = BaroPolicy(cfg["policy"]["target_altitude_m"])
+    elif kind == "model":
+        if not args.model:
+            ap.error("--policy model needs --model")
         policy = QwenPolicy(args.model, cfg, args.probes, args.steer)
-    server = Server(policy, cfg, session)
+    else:
+        policy = DryRunPolicy()
+    token = common.env_flag("FLIGHT_TOKEN")
+    server = Server(policy, cfg, session, save_frames=args.save_frames, token=token)
+    env = cfg["envelope"]
     print(f"session {session}  policy {policy.name}  log {server.log_path}")
+    print(f"envelope {env['floor_m']} to {env['ceiling_m']} m, {env['max_vertical_mps']} m/s, target "
+          f"{cfg['policy']['target_altitude_m']} m; token {'required' if token else 'not set'}; "
+          f"frames {'saved' if args.save_frames else 'not saved'}")
 
     import uvicorn
     uvicorn.run(build_app(server), host=args.host, port=args.port, log_level="warning")
