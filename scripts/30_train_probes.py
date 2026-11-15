@@ -47,6 +47,8 @@ def feature_sets(store: pl.ActStore, layer: int, positions: list[str], prompts: 
     if "last" in positions:
         if "neutral" in prompts and store.has(f"layer_{layer:02d}_last_neutral"):
             yield f"layer_{layer:02d}_last_neutral", "last", "neutral", targets
+        if "flight" in prompts and store.has(f"layer_{layer:02d}_last_flight"):
+            yield f"layer_{layer:02d}_last_flight", "last", "flight", targets
         if "targeted" in prompts:
             for t in targets:
                 if store.has(f"layer_{layer:02d}_last_targeted-{t}"):
@@ -78,7 +80,8 @@ def main() -> None:
     ap.add_argument("--targets", nargs="+", default=["altitude", "heading", "pitch", "scene_xy"])
     ap.add_argument("--split", default="scene_heldout", choices=["scene_heldout", "site_heldout", "within_scene"])
     ap.add_argument("--positions", nargs="+", default=["img_mean", "last"])
-    ap.add_argument("--prompts", nargs="+", default=["neutral", "targeted"])
+    ap.add_argument("--prompts", nargs="+", default=["neutral", "targeted", "flight"],
+                    help="flight = the last token under the flight prompt, from sessions recorded with --save-activations")
     ap.add_argument("--layers", nargs="*", type=int, default=None)
     ap.add_argument("--layer_step", type=int, default=1)
     ap.add_argument("--alphas", nargs="*", type=float, default=pcfg["probe"]["alphas"])

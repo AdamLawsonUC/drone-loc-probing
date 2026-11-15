@@ -11,6 +11,7 @@ data/dem/*.tif
 flights/**/*.MP4
 flights/**/*.mp4
 flights/**/frames/
+flights/**/activations/
 activations/
 checkpoints/
 

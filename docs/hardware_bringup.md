@@ -127,3 +127,31 @@ is also labelled probing data.
 
 On a shared network, start the server with `FLIGHT_TOKEN=<something> docker/run_server.sh ...` and type the same
 value into the app's token field. Without the right token `/act` and `/steer` return 401.
+
+## Collecting ego-pose data and activations with the model in the loop
+
+Add `--save-activations` to a model session and the server also keeps the model's residual stream for every
+frame, recorded while it chooses the action:
+
+```
+docker/run_server.sh --model qwen2.5-vl-7b --config configs/flight_indoor.yaml --save-frames --save-activations --session indoor_obs01
+```
+
+Two kinds of session, both worth having:
+
+- Observe: stick commands OFF in the app, you fly by hand. The model sees every frame and says what it would do,
+  but nothing it says reaches the drone. Use this to cover the pose range: heights across the envelope, slow full
+  turns, and the gimbal wheel from level to straight down.
+- Closed loop: stick commands ON. The model holds the target height. This is the behaviour the causal tests need.
+
+Afterwards:
+
+```
+docker/run.sh scripts/61_sessions_to_manifest.py --sessions indoor_obs01 indoor_qwen01 --site lab --out data/manifest_indoor.csv
+docker/run.sh scripts/22_session_activations.py --manifest data/manifest_indoor.csv --model qwen2.5-vl-7b --out activations/
+docker/run.sh scripts/30_train_probes.py --acts activations/qwen2.5-vl-7b-flight --targets altitude heading pitch --split within_scene --out results/
+docker/run.sh scripts/31_baselines.py --manifest data/manifest_indoor.csv --acts activations/ --model qwen2.5-vl-7b-flight --split within_scene --probes_run results/<probes run_id> --out results/
+```
+
+With one site the split is within-site (held-out 20 s segments), so this measures whether the signal is there,
+not whether it transfers to a new place.

@@ -7,7 +7,8 @@ Usage:
   python scripts/80_flight_server.py --policy baro --port 8765             # no model; holds the target on telemetry
   python scripts/80_flight_server.py --model qwen2.5-vl-7b --port 8765     # real policy
   python scripts/80_flight_server.py --model qwen2.5-vl-7b --probes results/<run>/probes/ --steer altitude
-  add --config configs/flight_indoor.yaml for the indoor envelope, --save-frames to keep every frame received
+  add --config configs/flight_indoor.yaml for the indoor envelope, --save-frames to keep every frame received,
+  --save-activations to keep the model's residual stream for every frame (model policy only)
 
 Endpoints
   GET  /health                       -> {"status", "model", "steer_delta", "uptime_s", "session", "server_time",
@@ -26,6 +27,12 @@ Every /act call is appended to flights/<session>/commands.csv, with the full tel
 --save-frames each image is also written to flights/<session>/frames/<seq>.jpg, so a session doubles as labelled
 data (image, relative altitude, heading, gimbal pitch, GPS). The envelope in the config is enforced here as well
 as in the app: no climb above the ceiling, no descend below the floor, hold on stale frames.
+
+With --save-activations, flights/<session>/activations/<seq>.npz holds, for the forward pass that produced the
+action: img_mean (layers x D, mean over the image tokens at the output of each decoder layer), last (layers x D,
+the last prompt token, where the action word is predicted), vision_tower (D, the image tokens as they enter layer
+0) and n_image_tokens. These are the activations under the flight prompt, while the model is acting; if steering
+is on they include its effect. 22_session_activations.py stacks them into the layout the probe scripts read.
 
 Steering: with --probes and --steer <target>, the ridge direction w from <probes>/<model>_<target>_L<layer>_*.npz
 is added to the residual stream at the chosen layer as delta * w / (w.w), which shifts a linear probe's readout
@@ -117,7 +124,8 @@ class SteeringHook:
 
 
 class QwenPolicy:
-    def __init__(self, key: str, cfg: dict, probes_dir: Optional[Path], steer_target: Optional[str]):
+    def __init__(self, key: str, cfg: dict, probes_dir: Optional[Path], steer_target: Optional[str],
+                 capture: bool = False):
         import torch
         from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 
@@ -137,6 +145,36 @@ class QwenPolicy:
         self._readout = []
         if probes_dir and steer_target:
             self._load_probe(probes_dir, key, steer_target, cfg["steering"].get("layer"))
+
+        # Residual-stream capture for --save-activations. Registered after the steering hook, so a steered
+        # layer is recorded as steered.
+        self.capture = capture
+        self.last_acts: Optional[dict] = None
+        self._mask = None
+        self._cap_img, self._cap_last, self._cap_vt = {}, {}, None
+        if capture:
+            self.image_token_id = getattr(self.model.config, "image_token_id", None)
+            if self.image_token_id is None:
+                self.image_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|image_pad|>")
+            for i, layer in enumerate(self.layers):
+                layer.register_forward_hook(self._make_capture(i))
+            self.layers[0].register_forward_pre_hook(self._capture_input, with_kwargs=True)
+
+    def _make_capture(self, i: int):
+        def hook(module, inputs, output):
+            hs = output[0] if isinstance(output, tuple) else output
+            m = self._mask
+            if m is not None and hs.shape[1] == m.shape[0]:      # the prefill pass only, not the decode steps
+                self._cap_img[i] = hs[0][m].float().mean(0).cpu()
+                self._cap_last[i] = hs[0][-1].float().cpu()
+            return None
+        return hook
+
+    def _capture_input(self, module, args, kwargs):
+        hs = args[0] if args else kwargs.get("hidden_states")
+        m = self._mask
+        if hs is not None and m is not None and hs.shape[1] == m.shape[0]:
+            self._cap_vt = hs[0][m].float().mean(0).cpu()
 
     def _load_probe(self, probes_dir: Path, key: str, target: str, layer: Optional[int]) -> None:
         pattern = f"{key}_{target}_L{layer:02d}_*.npz" if layer is not None else f"{key}_{target}_L*_*.npz"
@@ -172,8 +210,27 @@ class QwenPolicy:
         text = self.processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
         inputs = self.processor(text=[text], images=[image], return_tensors="pt").to(self.model.device)
         self._readout.clear()
+        self.last_acts = None
+        if self.capture:
+            self._mask = inputs["input_ids"][0] == self.image_token_id
+            self._cap_img.clear(); self._cap_last.clear(); self._cap_vt = None
         with torch.inference_mode():
             out = self.model.generate(**inputs, max_new_tokens=self.cfg["policy"]["max_new_tokens"], do_sample=False)
+        if self.capture:
+            try:
+                L = len(self.layers)
+                if len(self._cap_img) == L and int(self._mask.sum()) > 0:
+                    f16 = lambda t: np.clip(t.numpy(), -65000.0, 65000.0).astype(np.float16)   # no overflow to inf
+                    self.last_acts = {
+                        "img_mean": f16(torch.stack([self._cap_img[i] for i in range(L)])),
+                        "last": f16(torch.stack([self._cap_last[i] for i in range(L)])),
+                        "vision_tower": (f16(self._cap_vt) if self._cap_vt is not None else np.zeros(0, np.float16)),
+                        "n_image_tokens": np.int32(int(self._mask.sum())),
+                    }
+            except Exception as e:  # capture must never break the control loop
+                print(f"activation capture failed, turning it off: {e}")
+                self.capture = False
+            self._mask = None
         raw = self.processor.batch_decode(out[:, inputs["input_ids"].shape[1]:], skip_special_tokens=True)[0]
         readout = self._readout[0] if self._readout else None
         return raw, readout
@@ -181,7 +238,8 @@ class QwenPolicy:
 
 # ----------------------------------------------------------------------------------------------- server
 class Server:
-    def __init__(self, policy, cfg: dict, session: str, save_frames: bool = False, token: str = ""):
+    def __init__(self, policy, cfg: dict, session: str, save_frames: bool = False, token: str = "",
+                 save_activations: bool = False):
         self.policy = policy
         self.cfg = cfg
         self.session = session
@@ -192,6 +250,7 @@ class Server:
         self.lock = threading.Lock()
         self.log_path = common.ensure_dir(common.ROOT / cfg["logging"]["session_dir"] / session) / "commands.csv"
         self.frames_dir = common.ensure_dir(self.log_path.parent / "frames") if save_frames else None
+        self.acts_dir = common.ensure_dir(self.log_path.parent / "activations") if save_activations else None
         if not self.log_path.exists():
             self.log_path.write_text("timestamp,frame_ts,rel_alt,raw_text,action,vertical_mps,probe_readout,steer_delta,"
                                      "server_ms,frame_ms,note,seq,yaw,gimbal_pitch,lat,lon,sats,frame_file,telemetry_json\n")
@@ -237,6 +296,10 @@ class Server:
                 frame_file = f"frames/{int(seq):06d}.jpg" if str(seq).lstrip("-").isdigit() else f"frames/n{self.n_calls:06d}.jpg"
                 (self.log_path.parent / frame_file).write_bytes(image_bytes)
             raw, readout = self.policy.act(img, instr, telemetry)
+            acts = getattr(self.policy, "last_acts", None)
+            if self.acts_dir is not None and acts is not None:
+                name = f"{int(seq):06d}" if str(seq).lstrip("-").isdigit() else f"n{self.n_calls:06d}"
+                np.savez(self.acts_dir / f"{name}.npz", instruction=instr, **acts)
             action = self.parse_action(raw)
             action, note = self.apply_envelope(action, telemetry)
         v = self.cfg["envelope"]["max_vertical_mps"]
@@ -298,6 +361,8 @@ def main() -> None:
     ap.add_argument("--policy", default=None, choices=["dry-run", "pattern", "baro", "model"],
                     help="default: model if --model is given, else dry-run")
     ap.add_argument("--save-frames", action="store_true", help="write every received image to flights/<session>/frames/")
+    ap.add_argument("--save-activations", action="store_true",
+                    help="write the residual stream of every forward pass to flights/<session>/activations/ (model policy)")
     ap.add_argument("--probes", type=Path, default=None, help="folder of probe .npz files")
     ap.add_argument("--steer", default=None, help="probe target to steer, e.g. altitude")
     ap.add_argument("--host", default="0.0.0.0")
@@ -316,16 +381,20 @@ def main() -> None:
     elif kind == "model":
         if not args.model:
             ap.error("--policy model needs --model")
-        policy = QwenPolicy(args.model, cfg, args.probes, args.steer)
+        policy = QwenPolicy(args.model, cfg, args.probes, args.steer, capture=args.save_activations)
     else:
         policy = DryRunPolicy()
     token = common.env_flag("FLIGHT_TOKEN")
-    server = Server(policy, cfg, session, save_frames=args.save_frames, token=token)
+    if args.save_activations and kind != "model":
+        print("note: --save-activations needs the model policy; nothing will be captured")
+    server = Server(policy, cfg, session, save_frames=args.save_frames, token=token,
+                    save_activations=args.save_activations and kind == "model")
     env = cfg["envelope"]
     print(f"session {session}  policy {policy.name}  log {server.log_path}")
     print(f"envelope {env['floor_m']} to {env['ceiling_m']} m, {env['max_vertical_mps']} m/s, target "
           f"{cfg['policy']['target_altitude_m']} m; token {'required' if token else 'not set'}; "
-          f"frames {'saved' if args.save_frames else 'not saved'}")
+          f"frames {'saved' if args.save_frames else 'not saved'}; "
+          f"activations {'saved' if server.acts_dir is not None else 'not saved'}")
 
     import uvicorn
     uvicorn.run(build_app(server), host=args.host, port=args.port, log_level="warning")

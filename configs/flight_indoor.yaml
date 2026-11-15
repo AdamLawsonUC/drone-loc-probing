@@ -5,7 +5,7 @@
 # Heights are relative to take-off. Set ceiling_m at least 1 m below the lowest thing above the drone.
 
 envelope:
-  floor_m: 0.8
+  floor_m: 1.0             # raised from 0.8 after indoor01: the drone coasts about 0.2 m after a descend
   ceiling_m: 2.2
   max_vertical_mps: 0.2
   command_rate_hz: 1.0
