@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.usb.accessory"
+        android:required="true" />
+
+    <!-- Needed on Android 11+ to reach the system speech recognizer -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".MyApplication"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MSDKRemote"
+        android:usesCleartextTraffic="true"
+        tools:replace="android:usesCleartextTraffic"
+        tools:targetApi="31">
+
+        <activity
+            android:name=".ControlActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".vla.VlaActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <!-- drone-loc-probing: link to the flight server (plain HTTP, hence usesCleartextTraffic above) -->
+        <activity
+            android:name=".probe.ProbeFlightActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".LoadingActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <meta-data
+            android:name="name"
+            android:value="MSDKRemote" />
+        <meta-data
+            android:name="com.dji.sdk.API_KEY"
+            android:value="@string/API_KEY" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.MSDKRemote"
+            android:screenOrientation="portrait">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <action android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED"
+                android:resource="@xml/accessory_filter" />
+        </activity>
+
+    </application>
+
+</manifest>
