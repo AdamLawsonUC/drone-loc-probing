@@ -7,6 +7,7 @@ import android.os.Bundle;
 import android.text.InputType;
 import android.util.Log;
 import android.view.Surface;
+import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.WindowManager;
@@ -71,23 +72,57 @@ public class ProbeFlightActivity extends AppCompatActivity implements ProbeFligh
     private ScrollView scrollLog;
     private SurfaceView videoView;
 
+    // The preview needs both the camera stream and a created surface;
+    // whichever arrives last attaches the surface.
+    private volatile boolean cameraAvailable = false;
+    private volatile boolean surfaceReady = false;
+
     private final ICameraStreamManager.AvailableCameraUpdatedListener cameraListener =
             availableCameraList -> {
-                if (!availableCameraList.contains(ComponentIndexType.LEFT_OR_MAIN))
-                    return;
-
-                Surface surface = videoView.getHolder().getSurface();
-
-                ICameraStreamManager manager = CameraStreamManager.getInstance();
-                manager.removeCameraStreamSurface(surface);
-                manager.putCameraStreamSurface(
-                        ComponentIndexType.LEFT_OR_MAIN,
-                        surface,
-                        videoView.getWidth(),
-                        videoView.getHeight(),
-                        ICameraStreamManager.ScaleType.CENTER_INSIDE
-                );
+                boolean available = availableCameraList.contains(ComponentIndexType.LEFT_OR_MAIN);
+                if (available != cameraAvailable) {
+                    cameraAvailable = available;
+                    runOnUiThread(() -> appendLog(available
+                            ? "Camera stream available."
+                            : "Camera stream lost."));
+                }
+                runOnUiThread(this::attachPreview);
             };
+
+    private final SurfaceHolder.Callback surfaceCallback = new SurfaceHolder.Callback() {
+        @Override
+        public void surfaceCreated(@NonNull SurfaceHolder holder) { }
+
+        @Override
+        public void surfaceChanged(@NonNull SurfaceHolder holder, int format, int width, int height) {
+            surfaceReady = true;
+            attachPreview();
+        }
+
+        @Override
+        public void surfaceDestroyed(@NonNull SurfaceHolder holder) {
+            surfaceReady = false;
+            CameraStreamManager.getInstance().removeCameraStreamSurface(holder.getSurface());
+        }
+    };
+
+    private void attachPreview()
+    {
+        if (!cameraAvailable || !surfaceReady || videoView.getWidth() == 0)
+            return;
+
+        Surface surface = videoView.getHolder().getSurface();
+
+        ICameraStreamManager manager = CameraStreamManager.getInstance();
+        manager.removeCameraStreamSurface(surface);
+        manager.putCameraStreamSurface(
+                ComponentIndexType.LEFT_OR_MAIN,
+                surface,
+                videoView.getWidth(),
+                videoView.getHeight(),
+                ICameraStreamManager.ScaleType.CENTER_INSIDE
+        );
+    }
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState)
@@ -108,8 +143,8 @@ public class ProbeFlightActivity extends AppCompatActivity implements ProbeFligh
         setRunningUi(false);
         appendLog("1. Start the flight server on wolfgang.\n"
                 + "2. Test connection.\n"
-                + "3. Bench test with stick commands off.\n"
-                + "4. Take off by hand, fly into the envelope, tick stick commands, Start.");
+                + "3. Stick commands off: Start, Take off, fly with the controller (observe).\n"
+                + "4. Stick commands on: Take off, fly into the envelope, Start (server holds height).");
     }
 
     private View buildLayout()
@@ -163,6 +198,18 @@ public class ProbeFlightActivity extends AppCompatActivity implements ProbeFligh
         row.addView(buttonStop, weighted());
         root.addView(row, matchWrap());
 
+        LinearLayout flightRow = new LinearLayout(this);
+        flightRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button buttonTakeoff = new Button(this);
+        buttonTakeoff.setText("Take off");
+        buttonTakeoff.setOnClickListener(v -> confirmTakeoff());
+        Button buttonLand = new Button(this);
+        buttonLand.setText("Land");
+        buttonLand.setOnClickListener(v -> land());
+        flightRow.addView(buttonTakeoff, weighted());
+        flightRow.addView(buttonLand, weighted());
+        root.addView(flightRow, matchWrap());
+
         Button buttonEmergency = new Button(this);
         buttonEmergency.setText("EMERGENCY LAND");
         buttonEmergency.setTextColor(Color.WHITE);
@@ -180,6 +227,7 @@ public class ProbeFlightActivity extends AppCompatActivity implements ProbeFligh
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
         videoView = new SurfaceView(this);
+        videoView.getHolder().addCallback(surfaceCallback);
         root.addView(videoView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
@@ -270,12 +318,38 @@ public class ProbeFlightActivity extends AppCompatActivity implements ProbeFligh
                         + "port, and that the server is running.";
             }
 
+            result += "\n" + droneStatus();
+
             final String message = result;
             runOnUiThread(() -> {
                 appendLog(message);
                 buttonTest.setEnabled(true);
             });
         }, "ProbeFlightTest").start();
+    }
+
+    /** Aircraft link and video check, for the Test connection report. Blocks up to ~3 s. */
+    private String droneStatus()
+    {
+        Boolean connected = KeyManager.getInstance().getValue(
+                KeyTools.createKey(FlightControllerKey.KeyConnection), Boolean.FALSE);
+        Double altitude = KeyManager.getInstance().getValue(
+                KeyTools.createKey(FlightControllerKey.KeyAltitude), 0.0);
+
+        String video;
+        try {
+            byte[] jpeg = snapshotter.captureJpeg(640, 80, 3000);
+            video = (jpeg != null)
+                    ? String.format(Locale.ENGLISH, "video frame OK (%d kB)", jpeg.length / 1024)
+                    : "NO video frame (camera stream " + (cameraAvailable ? "available" : "not available") + ")";
+        }
+        catch (InterruptedException e) {
+            video = "video check interrupted";
+        }
+
+        return String.format(Locale.ENGLISH, "Drone: %s, altitude %.1f m, %s.",
+                Boolean.TRUE.equals(connected) ? "connected" : "NOT connected",
+                (altitude != null) ? altitude : 0.0, video);
     }
 
     private void confirmAndStart()
@@ -321,6 +395,43 @@ public class ProbeFlightActivity extends AppCompatActivity implements ProbeFligh
             runner.requestStop();
             appendLog("Stop requested - drone hovers, control returns to the RC.");
         }
+    }
+
+    private void confirmTakeoff()
+    {
+        new AlertDialog.Builder(this)
+                .setTitle("Take off?")
+                .setMessage("The drone starts its motors and climbs to about 1.2 m, then hovers. "
+                        + "Fly it with the remote controller sticks as usual.")
+                .setPositiveButton("Take off", (dialog, which) -> flightAction(
+                        FlightControllerKey.KeyStartTakeoff, "Take-off"))
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    /** Normal landing. If the server has the vertical axis, the run is stopped first. */
+    private void land()
+    {
+        stopRun();
+        flightAction(FlightControllerKey.KeyStartAutoLanding, "Landing");
+    }
+
+    private void flightAction(dji.sdk.keyvalue.key.DJIActionKeyInfo<EmptyMsg, EmptyMsg> key, String name)
+    {
+        appendLog(name + " requested.");
+        KeyManager.getInstance().performAction(
+                KeyTools.createKey(key),
+                new CommonCallbacks.CompletionCallbackWithParam<EmptyMsg>() {
+                    @Override
+                    public void onSuccess(EmptyMsg emptyMsg) {
+                        runOnUiThread(() -> appendLog(name + " started."));
+                    }
+
+                    @Override
+                    public void onFailure(@NonNull IDJIError error) {
+                        runOnUiThread(() -> appendLog(name + " failed: " + error));
+                    }
+                });
     }
 
     /**
