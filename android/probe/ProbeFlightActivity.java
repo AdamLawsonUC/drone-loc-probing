@@ -143,8 +143,8 @@ public class ProbeFlightActivity extends AppCompatActivity implements ProbeFligh
         setRunningUi(false);
         appendLog("1. Start the flight server on wolfgang.\n"
                 + "2. Test connection.\n"
-                + "3. Bench test with stick commands off.\n"
-                + "4. Take off by hand, fly into the envelope, tick stick commands, Start.");
+                + "3. Stick commands off: Start, Take off, fly with the controller (observe).\n"
+                + "4. Stick commands on: Take off, fly into the envelope, Start (server holds height).");
     }
 
     private View buildLayout()
@@ -197,6 +197,18 @@ public class ProbeFlightActivity extends AppCompatActivity implements ProbeFligh
         row.addView(buttonStart, weighted());
         row.addView(buttonStop, weighted());
         root.addView(row, matchWrap());
+
+        LinearLayout flightRow = new LinearLayout(this);
+        flightRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button buttonTakeoff = new Button(this);
+        buttonTakeoff.setText("Take off");
+        buttonTakeoff.setOnClickListener(v -> confirmTakeoff());
+        Button buttonLand = new Button(this);
+        buttonLand.setText("Land");
+        buttonLand.setOnClickListener(v -> land());
+        flightRow.addView(buttonTakeoff, weighted());
+        flightRow.addView(buttonLand, weighted());
+        root.addView(flightRow, matchWrap());
 
         Button buttonEmergency = new Button(this);
         buttonEmergency.setText("EMERGENCY LAND");
@@ -383,6 +395,43 @@ public class ProbeFlightActivity extends AppCompatActivity implements ProbeFligh
             runner.requestStop();
             appendLog("Stop requested - drone hovers, control returns to the RC.");
         }
+    }
+
+    private void confirmTakeoff()
+    {
+        new AlertDialog.Builder(this)
+                .setTitle("Take off?")
+                .setMessage("The drone starts its motors and climbs to about 1.2 m, then hovers. "
+                        + "Fly it with the remote controller sticks as usual.")
+                .setPositiveButton("Take off", (dialog, which) -> flightAction(
+                        FlightControllerKey.KeyStartTakeoff, "Take-off"))
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    /** Normal landing. If the server has the vertical axis, the run is stopped first. */
+    private void land()
+    {
+        stopRun();
+        flightAction(FlightControllerKey.KeyStartAutoLanding, "Landing");
+    }
+
+    private void flightAction(dji.sdk.keyvalue.key.DJIActionKeyInfo<EmptyMsg, EmptyMsg> key, String name)
+    {
+        appendLog(name + " requested.");
+        KeyManager.getInstance().performAction(
+                KeyTools.createKey(key),
+                new CommonCallbacks.CompletionCallbackWithParam<EmptyMsg>() {
+                    @Override
+                    public void onSuccess(EmptyMsg emptyMsg) {
+                        runOnUiThread(() -> appendLog(name + " started."));
+                    }
+
+                    @Override
+                    public void onFailure(@NonNull IDJIError error) {
+                        runOnUiThread(() -> appendLog(name + " failed: " + error));
+                    }
+                });
     }
 
     /**
