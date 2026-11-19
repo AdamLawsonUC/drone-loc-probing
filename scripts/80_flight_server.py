@@ -244,13 +244,16 @@ class Server:
         self.cfg = cfg
         self.session = session
         self.token = token
-        self.n_calls = 0
+        self.n_calls = 0      # frames received in this session, across app restarts and server restarts
         self.t_start = time.time()
         self.last_cmd_time = 0.0
         self.lock = threading.Lock()
         self.log_path = common.ensure_dir(common.ROOT / cfg["logging"]["session_dir"] / session) / "commands.csv"
         self.frames_dir = common.ensure_dir(self.log_path.parent / "frames") if save_frames else None
         self.acts_dir = common.ensure_dir(self.log_path.parent / "activations") if save_activations else None
+        if self.log_path.exists():
+            with self.log_path.open() as f:
+                self.n_calls = max(0, sum(1 for _ in csv.reader(f)) - 1)   # continue numbering in a reused session
         if not self.log_path.exists():
             self.log_path.write_text("timestamp,frame_ts,rel_alt,raw_text,action,vertical_mps,probe_readout,steer_delta,"
                                      "server_ms,frame_ms,note,seq,yaw,gimbal_pitch,lat,lon,sats,frame_file,telemetry_json\n")
@@ -291,15 +294,16 @@ class Server:
         with self.lock:
             self.n_calls += 1
             seq = telemetry.get("seq", self.n_calls)
+            # Files are numbered by the server's own counter, not the app's seq: the app restarts seq at 1 on
+            # every Start, which overwrote the first flight of indoor_obs02 (19 Nov 2026).
             frame_file = ""
             if self.frames_dir is not None:
-                frame_file = f"frames/{int(seq):06d}.jpg" if str(seq).lstrip("-").isdigit() else f"frames/n{self.n_calls:06d}.jpg"
+                frame_file = f"frames/{self.n_calls:06d}.jpg"
                 (self.log_path.parent / frame_file).write_bytes(image_bytes)
             raw, readout = self.policy.act(img, instr, telemetry)
             acts = getattr(self.policy, "last_acts", None)
             if self.acts_dir is not None and acts is not None:
-                name = f"{int(seq):06d}" if str(seq).lstrip("-").isdigit() else f"n{self.n_calls:06d}"
-                np.savez(self.acts_dir / f"{name}.npz", instruction=instr, **acts)
+                np.savez(self.acts_dir / f"{self.n_calls:06d}.npz", instruction=instr, **acts)
             action = self.parse_action(raw)
             action, note = self.apply_envelope(action, telemetry)
         v = self.cfg["envelope"]["max_vertical_mps"]

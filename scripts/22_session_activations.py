@@ -60,7 +60,7 @@ def main() -> None:
 
     files = []
     for _, r in man.iterrows():
-        f = args.flights / str(r.flight_id) / "activations" / f"{int(r.frame_index):06d}.npz"
+        f = args.flights / str(r.flight_id) / "activations" / f"{Path(str(r.image_path)).stem}.npz"   # same number as the frame
         files.append(f if f.exists() else None)
     have = [i for i, f in enumerate(files) if f is not None]
     per_session = man.assign(has=[f is not None for f in files]).groupby("flight_id").has.agg(["sum", "count"])

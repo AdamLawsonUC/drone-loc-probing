@@ -54,6 +54,10 @@ def load_session(flights: Path, session: str, site: str, include_ground: bool, s
         policy = json.loads((d / "session.json").read_text()).get("policy", "?")
 
     has_frame = df["frame_file"].map(lambda f: isinstance(f, str) and f != "" and (d / f).exists())
+    # A frame file named by more than one row was overwritten by the later row (sessions recorded before the
+    # server numbered files itself). Only the last row describes what is on disk.
+    overwritten = has_frame & df.duplicated("frame_file", keep="last")
+    has_frame &= ~overwritten
     keep = has_frame & df["rel_alt"].notna()
     if not include_ground:
         keep &= df["flying"]
@@ -61,7 +65,8 @@ def load_session(flights: Path, session: str, site: str, include_ground: bool, s
     out = pd.DataFrame(index=k.index)
     t = pd.to_numeric(k["frame_ts"], errors="coerce")
     seq = pd.to_numeric(k["seq"], errors="coerce").fillna(0).astype(int)
-    out["frame_id"] = [f"{session}__{s:06d}" for s in seq]
+    stem = k["frame_file"].map(lambda f: Path(f).stem)
+    out["frame_id"] = [f"{session}__{s}" for s in stem]
     out["site_or_scene"] = site
     out["altitude_agl"] = pd.to_numeric(k["rel_alt"], errors="coerce")
     out["yaw"] = pd.to_numeric(k["yaw"], errors="coerce") % 360.0
@@ -92,7 +97,7 @@ def load_session(flights: Path, session: str, site: str, include_ground: bool, s
             out[c] = np.nan
     summary = {"session": session, "site": site, "policy": policy, "rows": n_all, "kept": len(out),
                "dropped_ground": int((has_frame & ~df["flying"]).sum()) if not include_ground else 0,
-               "dropped_no_frame": int((~has_frame).sum()),
+               "dropped_no_frame": int((~has_frame & ~overwritten).sum()), "dropped_overwritten": int(overwritten.sum()),
                "alt_min": out.altitude_agl.min(), "alt_max": out.altitude_agl.max(),
                "yaw_spread_deg": float(np.degrees(np.sqrt(-2 * np.log(max(1e-9, np.hypot(np.sin(np.radians(out.yaw)).mean(),
                                                                                          np.cos(np.radians(out.yaw)).mean()))))))
@@ -124,7 +129,7 @@ def main() -> None:
         parts.append(df)
         summaries.append(summ)
         print(f"ok  {s:16s} kept {summ['kept']:5d} of {summ['rows']:5d}  (ground {summ['dropped_ground']}, no frame "
-              f"{summ['dropped_no_frame']})  alt {summ['alt_min']} to {summ['alt_max']} m  pitch {summ['pitch_min']} to "
+              f"{summ['dropped_no_frame']}, overwritten {summ['dropped_overwritten']})  alt {summ['alt_min']} to {summ['alt_max']} m  pitch {summ['pitch_min']} to "
               f"{summ['pitch_max']} deg  gps {summ['gps_fix_frac']:.0%}")
     if not parts or sum(len(p) for p in parts) == 0:
         sys.exit("no frames kept; manifest not written (bench sessions need --include_ground)")
