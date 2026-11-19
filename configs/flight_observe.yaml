@@ -1,0 +1,29 @@
+# Observe sessions outdoors: the pilot flies, the model watches. Same as flight.yaml except two frames a second.
+# Use with stick commands OFF in the app. For closed-loop flights use flight.yaml (one command a second).
+#   docker/run_server.sh --model qwen2.5-vl-7b --config configs/flight_observe.yaml --save-frames --save-activations --session <name>
+
+envelope:
+  floor_m: 15            # relative altitude; the app also sets the SDK altitude limit as a hard stop
+  ceiling_m: 60
+  max_vertical_mps: 0.5  # magnitude of climb/descend commands
+  command_rate_hz: 2.0   # observe sessions: the app sends two frames a second (stick commands OFF)
+  hold_on_stale_s: 3.0   # if the newest frame is older than this, return hold
+
+policy:
+  target_altitude_m: 30
+  action_vocab: [climb, hold, descend]
+  prompt: >-
+    You are the autopilot of a small drone. Your task is to hold an altitude of {target_altitude_m} metres
+    above the ground. Look at the camera image and reply with exactly one word: climb, hold, or descend.
+  max_new_tokens: 4
+  image_max_side_px: 448   # downscale before inference; the app can downscale before sending too
+
+steering:
+  enabled: false
+  target: altitude         # probe whose direction is used
+  layer: null              # filled from the probe file if null
+  delta: 0.0               # shift in the probe's output units; set live via POST /steer
+  positions: all           # all | image   (which token positions get the shift)
+
+logging:
+  session_dir: flights     # flights/<session>/commands.csv
