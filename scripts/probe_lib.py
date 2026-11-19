@@ -25,7 +25,8 @@ def encode_target(name: str, tcfg: dict, man: pd.DataFrame) -> np.ndarray:
     """Manifest columns -> the probe's regression target, shape (N, k). NaN where the label is missing."""
     enc, col = tcfg["encoding"], tcfg["column"]
     if enc == "log":
-        return np.log(man[col].to_numpy(float))[:, None]
+        # altitude comes in 0.1 m steps and can read 0 just after lift-off; clip so the log stays finite
+        return np.log(np.clip(man[col].to_numpy(float), 0.1, None))[:, None]
     if enc == "sincos":
         a = np.radians(man[col].to_numpy(float))
         return np.stack([np.sin(a), np.cos(a)], 1)
@@ -157,6 +158,8 @@ def ridge_cv(Xtr: np.ndarray, Ytr: np.ndarray, groups: np.ndarray, Xte: np.ndarr
     ymu = Ytr.mean(0)
     Yc = Ytr - ymu
     D = Z.shape[1]
+    if Z.shape[0] < D:
+        return _ridge_cv_dual(Z, Yc, ymu, mu, sd, groups, Xte, alphas, col_groups, cv, return_weights)
     eye = np.eye(D)
     n_groups = len(np.unique(groups))
     k = min(cv, n_groups)
@@ -186,6 +189,48 @@ def ridge_cv(Xtr: np.ndarray, Ytr: np.ndarray, groups: np.ndarray, Xte: np.ndarr
     for a_i in sorted(set(best)):
         cols = [c for g, cg in zip(best, col_groups) if g == a_i for c in cg]
         W[:, cols] = cho_solve(cho_factor(G + alphas[a_i] * eye, check_finite=False), B[:, cols], check_finite=False)
+    pred = None
+    if Xte is not None:
+        pred = ((np.asarray(Xte, dtype=np.float64) - mu) / sd) @ W + ymu
+    res = FitResult(pred=pred, alphas=[float(alphas[i]) for i in best],
+                    edge=[len(alphas) > 2 and i in (0, len(alphas) - 1) for i in best])
+    if return_weights:
+        res.W = W / sd[:, None]
+        res.b = ymu - mu @ res.W
+    return res
+
+
+def _ridge_cv_dual(Z, Yc, ymu, mu, sd, groups, Xte, alphas, col_groups, cv, return_weights) -> FitResult:
+    """The same ridge solution through the N x N kernel, for fewer frames than dimensions (a single flight).
+    W = Z' (Z Z' + alpha I)^-1 Y is identical to (Z'Z + alpha I)^-1 Z'Y, at the cost of N^3 instead of D^3."""
+    n = Z.shape[0]
+    K = Z @ Z.T
+    n_groups = len(np.unique(groups))
+    k = min(cv, n_groups)
+    if k >= 2 and len(alphas) > 1:
+        chunk = np.empty(n, dtype=int)
+        for j, (_, b) in enumerate(GroupKFold(k).split(Z, groups=groups)):
+            chunk[b] = j
+        err = np.zeros((len(alphas), Yc.shape[1]))
+        for j in range(k):
+            tr, va = np.flatnonzero(chunk != j), np.flatnonzero(chunk == j)
+            Ktr, Kva = K[np.ix_(tr, tr)], K[np.ix_(va, tr)]
+            eye = np.eye(len(tr))
+            for a_i, a in enumerate(alphas):
+                A = cho_solve(cho_factor(Ktr + a * eye, check_finite=False), Yc[tr], check_finite=False)
+                err[a_i] += ((Kva @ A - Yc[va]) ** 2).sum(0)
+        var = Yc.var(0) * n
+        var[var == 0] = 1.0
+        err = err / var
+        best = [int(np.argmin(err[:, cols].sum(1))) for cols in col_groups]
+    else:
+        best = [len(alphas) // 2 for _ in col_groups]
+    A = np.zeros((n, Yc.shape[1]))
+    eye = np.eye(n)
+    for a_i in sorted(set(best)):
+        cols = [c for g, cg in zip(best, col_groups) if g == a_i for c in cg]
+        A[:, cols] = cho_solve(cho_factor(K + alphas[a_i] * eye, check_finite=False), Yc[:, cols], check_finite=False)
+    W = Z.T @ A
     pred = None
     if Xte is not None:
         pred = ((np.asarray(Xte, dtype=np.float64) - mu) / sd) @ W + ymu
