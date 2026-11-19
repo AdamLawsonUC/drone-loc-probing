@@ -40,7 +40,8 @@ import common  # noqa: E402
 
 COLUMNS = ["frame_id", "site_or_scene", "split", "x", "y", "altitude_agl", "yaw", "pitch", "tile_id", "tile_rotation",
            "u", "v", "yaw_rel_tile", "localisability", "sun_azimuth", "source", "traj_id", "frame_index", "image_path",
-           "flight_id", "timestamp", "lat", "lon", "sats", "altitude_method", "policy", "action", "steer_delta"]
+           "flight_id", "timestamp", "lat", "lon", "sats", "altitude_method", "policy", "action", "steer_delta",
+           "model_in_control", "task_id", "chosen"]
 
 
 def load_session(flights: Path, session: str, site: str, include_ground: bool, segment_s: float) -> tuple[pd.DataFrame, dict]:
@@ -90,6 +91,10 @@ def load_session(flights: Path, session: str, site: str, include_ground: bool, s
     out["policy"] = policy
     out["action"] = k["action"]
     out["steer_delta"] = pd.to_numeric(k["steer_delta"], errors="coerce")
+    # who was flying, and what the model was asked to do and chose (sessions recorded with a task schedule)
+    out["model_in_control"] = tel[keep].map(lambda t: bool(t.get("sticks", False)))
+    out["task_id"] = k["task_id"] if "task_id" in k else ""
+    out["chosen"] = k["chosen"] if "chosen" in k else k["action"]
     out["source"] = "real"
     out["split"] = ""
     for c in COLUMNS:
@@ -102,7 +107,8 @@ def load_session(flights: Path, session: str, site: str, include_ground: bool, s
                "yaw_spread_deg": float(np.degrees(np.sqrt(-2 * np.log(max(1e-9, np.hypot(np.sin(np.radians(out.yaw)).mean(),
                                                                                          np.cos(np.radians(out.yaw)).mean()))))))
                if len(out) else np.nan,
-               "pitch_min": out.pitch.min(), "pitch_max": out.pitch.max(), "gps_fix_frac": float(fix.mean()) if len(out) else 0.0}
+               "pitch_min": out.pitch.min(), "pitch_max": out.pitch.max(), "gps_fix_frac": float(fix.mean()) if len(out) else 0.0,
+               "model_frac": float(out["model_in_control"].mean()) if len(out) else 0.0}
     return out[COLUMNS], summary
 
 
@@ -130,7 +136,7 @@ def main() -> None:
         summaries.append(summ)
         print(f"ok  {s:16s} kept {summ['kept']:5d} of {summ['rows']:5d}  (ground {summ['dropped_ground']}, no frame "
               f"{summ['dropped_no_frame']}, overwritten {summ['dropped_overwritten']})  alt {summ['alt_min']} to {summ['alt_max']} m  pitch {summ['pitch_min']} to "
-              f"{summ['pitch_max']} deg  gps {summ['gps_fix_frac']:.0%}")
+              f"{summ['pitch_max']} deg  gps {summ['gps_fix_frac']:.0%}  model flying {summ['model_frac']:.0%}")
     if not parts or sum(len(p) for p in parts) == 0:
         sys.exit("no frames kept; manifest not written (bench sessions need --include_ground)")
     man = pd.concat(parts, ignore_index=True)

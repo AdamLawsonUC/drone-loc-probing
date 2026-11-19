@@ -21,6 +21,15 @@ Endpoints
                                          "server_ms", "frame_ms", "session", "note"}
   POST /steer                        json {"delta": float}   shifts the probe readout by delta; 0 disables
 
+Actions. The config's policy.action_vocab lists the words the model may answer with. Besides climb, hold and
+descend the server understands forward, back, left, right (body frame), turn_left, turn_right, tilt_up and
+tilt_down (camera). Each reply becomes one short move at the envelope's fixed speeds, returned as vertical_mps,
+forward_mps, right_mps, yaw_dps and gimbal_delta_deg. `chosen` is what the model asked for, `action` what the
+envelope allowed. Horizontal moves need a geofence: the app sends its distance and bearing from where the run
+started, and a move that would carry the drone further out once it is at the radius becomes a hold.
+The config's tasks list is a schedule of instructions (id, seconds, instruction) that replaces {task} in the
+prompt, by time since the app pressed Start; it gives the model reasons to change height, heading and camera angle.
+
 If the environment variable FLIGHT_TOKEN is set, /act and /steer require the header X-Flight-Token with that value.
 
 Every /act call is appended to flights/<session>/commands.csv, with the full telemetry the app sent. With
@@ -58,7 +67,6 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common  # noqa: E402
 
-ACTIONS = ("climb", "hold", "descend")
 
 
 # ----------------------------------------------------------------------------------------------- policies
@@ -70,19 +78,22 @@ class DryRunPolicy:
 
 
 class PatternPolicy:
-    """No model. Cycles climb, hold, descend, hold, a few seconds each, to prove the actuation path and its sign.
-    The envelope still applies, so the drone stays between the floor and the ceiling."""
+    """No model. Steps through every action in the config's vocabulary, each followed by a hold, a few seconds each,
+    to prove each axis and its sign. With the three-word vocabulary that is climb, hold, descend, hold. The envelope
+    still applies. Opposite moves sit next to each other in the vocabulary, so the drone ends up near where it began."""
     name = "pattern"
 
-    def __init__(self, phase_s: float = 4.0):
+    def __init__(self, vocab: Optional[list] = None, phase_s: float = 4.0):
+        moves = [a for a in (vocab or ["climb", "descend"]) if a != "hold"]
+        self.cycle = [x for a in moves for x in (a, "hold")]
         self.phase_s = phase_s
         self.t0 = None
 
     def act(self, image: Image.Image, instruction: str, telemetry: Optional[dict] = None) -> tuple[str, Optional[float]]:
         if self.t0 is None:
             self.t0 = time.time()
-        k = int((time.time() - self.t0) / self.phase_s) % 4
-        return ("climb", "hold", "descend", "hold")[k], None
+        k = int((time.time() - self.t0) / self.phase_s) % len(self.cycle)
+        return self.cycle[k], None
 
 
 class BaroPolicy:
@@ -256,14 +267,51 @@ class Server:
                 self.n_calls = max(0, sum(1 for _ in csv.reader(f)) - 1)   # continue numbering in a reused session
         if not self.log_path.exists():
             self.log_path.write_text("timestamp,frame_ts,rel_alt,raw_text,action,vertical_mps,probe_readout,steer_delta,"
-                                     "server_ms,frame_ms,note,seq,yaw,gimbal_pitch,lat,lon,sats,frame_file,telemetry_json\n")
+                                     "server_ms,frame_ms,note,seq,yaw,gimbal_pitch,lat,lon,sats,frame_file,telemetry_json,"
+                                     "task_id,chosen,forward_mps,right_mps,yaw_dps,gimbal_delta_deg,home_dist_m\n")
         common.dump_json(self.log_path.parent / "session.json", {
             "session": session, "policy": policy.name, "config": cfg, "git_hash": common.git_hash(short=False),
             "command": " ".join(sys.argv), "started": dt.datetime.now().isoformat(timespec="seconds")})
 
+    # Body-frame meaning of each action word: (forward, right, up, clockwise turn, camera tilt), as signs.
+    MOVES = {
+        "hold": (0, 0, 0, 0, 0),
+        "climb": (0, 0, 1, 0, 0), "descend": (0, 0, -1, 0, 0),
+        "forward": (1, 0, 0, 0, 0), "back": (-1, 0, 0, 0, 0),
+        "right": (0, 1, 0, 0, 0), "left": (0, -1, 0, 0, 0),
+        "turn_right": (0, 0, 0, 1, 0), "turn_left": (0, 0, 0, -1, 0),
+        "tilt_up": (0, 0, 0, 0, 1), "tilt_down": (0, 0, 0, 0, -1),
+    }
+    TRAVEL_DIRECTION_DEG = {"forward": 0.0, "right": 90.0, "back": 180.0, "left": 270.0}
+
+    def vocab(self) -> list:
+        return [a for a in self.cfg["policy"].get("action_vocab", ["climb", "hold", "descend"]) if a in self.MOVES]
+
     def parse_action(self, raw: str) -> str:
-        m = re.search(r"\b(climb|hold|descend)\b", raw.lower())
-        return m.group(1) if m else "hold"
+        """First vocabulary word in the reply; anything else is a hold. 'turn left' and 'turn-left' count."""
+        text = re.sub(r"[\s\-]+", "_", raw.lower().strip())
+        best, best_pos = "hold", None
+        for a in sorted(self.vocab(), key=len, reverse=True):
+            m = re.search(rf"(?<![a-z]){re.escape(a)}(?![a-z])", text)
+            if m and (best_pos is None or m.start() < best_pos):
+                best, best_pos = a, m.start()
+        return best
+
+    def current_task(self, telemetry: dict) -> tuple[str, str]:
+        """(task id, task text) from the config's schedule, by time since the app pressed Start. Loops."""
+        tasks = self.cfg.get("tasks") or []
+        if not tasks:
+            return "", ""
+        t = telemetry.get("run_t")
+        if t is None:
+            t = time.time() - self.t_start
+        total = sum(float(k["seconds"]) for k in tasks)
+        t = float(t) % total
+        for k in tasks:
+            if t < float(k["seconds"]):
+                return str(k["id"]), str(k["instruction"])
+            t -= float(k["seconds"])
+        return str(tasks[-1]["id"]), str(tasks[-1]["instruction"])
 
     def apply_envelope(self, action: str, telemetry: dict) -> tuple[str, str]:
         env = self.cfg["envelope"]
@@ -277,6 +325,28 @@ class Server:
                 action, note = "hold", "at_ceiling"
             elif action == "descend" and alt <= env["floor_m"]:
                 action, note = "hold", "at_floor"
+        if action in self.TRAVEL_DIRECTION_DEG:
+            radius = env.get("geofence_radius_m")
+            dist, bearing, yaw = telemetry.get("home_dist_m"), telemetry.get("home_bearing_deg"), telemetry.get("yaw")
+            if not env.get("max_horizontal_mps"):
+                action, note = "hold", "no_horizontal_authority"
+            elif radius is not None and (dist is None or bearing is None or yaw is None):
+                action, note = "hold", "no_position"          # never translate without knowing where the fence is
+            elif radius is not None and dist >= radius:
+                # outward if the direction of travel has a component along the line from home to the drone
+                travel = float(yaw) + self.TRAVEL_DIRECTION_DEG[action]
+                if np.cos(np.radians(travel - float(bearing))) > 0:
+                    action, note = "hold", "at_fence"
+        if action in ("tilt_up", "tilt_down"):
+            pitch = telemetry.get("gimbal_pitch")
+            step = float(env.get("gimbal_step_deg", 0) or 0)
+            if step <= 0:
+                action, note = "hold", "no_gimbal_authority"
+            elif pitch is not None:
+                # the app clamps the target to the limits, so only refuse when the camera is already at one
+                if (action == "tilt_up" and float(pitch) >= env.get("gimbal_max_deg", 0) - 1) or \
+                        (action == "tilt_down" and float(pitch) <= env.get("gimbal_min_deg", -90) + 1):
+                    action, note = "hold", "gimbal_limit"
         if action != "hold":
             # Half a period: the app already sends one request per period and lets a command expire after two.
             # A tighter gap refused genuine commands whenever network jitter bunched two requests (seen 14 Nov).
@@ -290,7 +360,8 @@ class Server:
     def handle(self, image_bytes: bytes, instruction: Optional[str], telemetry: dict) -> dict:
         t0 = time.time()
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        instr = instruction or self.cfg["policy"]["prompt"].format(**self.cfg["policy"])
+        task_id, task_text = self.current_task(telemetry)
+        instr = instruction or self.cfg["policy"]["prompt"].format(**{**self.cfg["policy"], "task": task_text})
         with self.lock:
             self.n_calls += 1
             seq = telemetry.get("seq", self.n_calls)
@@ -304,10 +375,15 @@ class Server:
             acts = getattr(self.policy, "last_acts", None)
             if self.acts_dir is not None and acts is not None:
                 np.savez(self.acts_dir / f"{self.n_calls:06d}.npz", instruction=instr, **acts)
-            action = self.parse_action(raw)
-            action, note = self.apply_envelope(action, telemetry)
-        v = self.cfg["envelope"]["max_vertical_mps"]
-        vertical = {"climb": v, "hold": 0.0, "descend": -v}[action]
+            chosen = self.parse_action(raw)
+            action, note = self.apply_envelope(chosen, telemetry)
+        env = self.cfg["envelope"]
+        fwd, right, up, turn, tilt = self.MOVES[action]
+        vertical = up * float(env["max_vertical_mps"])
+        forward_mps = fwd * float(env.get("max_horizontal_mps", 0) or 0)
+        right_mps = right * float(env.get("max_horizontal_mps", 0) or 0)
+        yaw_dps = turn * float(env.get("yaw_rate_dps", 0) or 0)
+        gimbal_delta = tilt * float(env.get("gimbal_step_deg", 0) or 0)
         server_ms = (time.time() - t0) * 1000
         frame_ms = (time.time() - float(telemetry["ts"])) * 1000 if telemetry.get("ts") else None
         delta = getattr(getattr(self.policy, "hook", None), "delta", 0.0)
@@ -315,12 +391,14 @@ class Server:
                raw.replace("\n", " ").replace(",", ";"), action, vertical, readout, delta, round(server_ms, 1),
                None if frame_ms is None else round(frame_ms, 1), note, seq, telemetry.get("yaw"),
                telemetry.get("gimbal_pitch"), telemetry.get("lat"), telemetry.get("lon"), telemetry.get("sats"),
-               frame_file, json.dumps(telemetry, separators=(",", ":"))]
+               frame_file, json.dumps(telemetry, separators=(",", ":")),
+               task_id, chosen, forward_mps, right_mps, yaw_dps, gimbal_delta, telemetry.get("home_dist_m")]
         with self.log_path.open("a", newline="") as f:
             csv.writer(f).writerow(row)
-        return {"action": action, "vertical_mps": vertical, "raw_text": raw, "probe_readout": readout,
-                "steer_delta": delta, "server_ms": round(server_ms, 1), "frame_ms": frame_ms, "session": self.session,
-                "note": note}
+        return {"action": action, "vertical_mps": vertical, "forward_mps": forward_mps, "right_mps": right_mps,
+                "yaw_dps": yaw_dps, "gimbal_delta_deg": gimbal_delta, "chosen": chosen, "task_id": task_id,
+                "raw_text": raw, "probe_readout": readout, "steer_delta": delta, "server_ms": round(server_ms, 1),
+                "frame_ms": frame_ms, "session": self.session, "note": note}
 
 
 def build_app(server: Server):
@@ -337,7 +415,8 @@ def build_app(server: Server):
                 "steer_delta": getattr(getattr(server.policy, "hook", None), "delta", 0.0),
                 "uptime_s": round(time.time() - server.t_start, 1), "session": server.session,
                 "server_time": time.time(), "envelope": server.cfg["envelope"],
-                "target_altitude_m": server.cfg["policy"]["target_altitude_m"], "token_required": bool(server.token)}
+                "target_altitude_m": server.cfg["policy"].get("target_altitude_m"), "token_required": bool(server.token),
+                "action_vocab": server.vocab(), "n_tasks": len(server.cfg.get("tasks") or [])}
 
     @app.post("/act")
     async def act(image: UploadFile = File(...), instruction: Optional[str] = Form(None), telemetry: Optional[str] = Form(None),
@@ -379,9 +458,9 @@ def main() -> None:
     session = args.session or dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     kind = args.policy or ("dry-run" if (args.dry_run or not args.model) else "model")
     if kind == "pattern":
-        policy = PatternPolicy()
+        policy = PatternPolicy(cfg["policy"].get("action_vocab"))
     elif kind == "baro":
-        policy = BaroPolicy(cfg["policy"]["target_altitude_m"])
+        policy = BaroPolicy(cfg["policy"].get("target_altitude_m", 30))
     elif kind == "model":
         if not args.model:
             ap.error("--policy model needs --model")
@@ -395,8 +474,11 @@ def main() -> None:
                     save_activations=args.save_activations and kind == "model")
     env = cfg["envelope"]
     print(f"session {session}  policy {policy.name}  log {server.log_path}")
+    print(f"actions: {', '.join(server.vocab())}; tasks: {len(cfg.get('tasks') or [])}; "
+          f"horizontal {env.get('max_horizontal_mps', 0)} m/s, fence {env.get('geofence_radius_m', '-')} m, "
+          f"turn {env.get('yaw_rate_dps', 0)} deg/s, tilt step {env.get('gimbal_step_deg', 0)} deg")
     print(f"envelope {env['floor_m']} to {env['ceiling_m']} m, {env['max_vertical_mps']} m/s, target "
-          f"{cfg['policy']['target_altitude_m']} m; token {'required' if token else 'not set'}; "
+          f"{cfg['policy'].get('target_altitude_m')} m; token {'required' if token else 'not set'}; "
           f"frames {'saved' if args.save_frames else 'not saved'}; "
           f"activations {'saved' if server.acts_dir is not None else 'not saved'}")
 

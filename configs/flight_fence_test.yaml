@@ -1,0 +1,27 @@
+# Geofence test, no model. The pattern policy asks for "forward" again and again; the fence is only 10 m, so the
+# drone should stop by itself about 10 m from where Start was pressed and the log should show at_fence.
+#   docker/run_server.sh --policy pattern --config configs/flight_fence_test.yaml --save-frames --session <name>
+# App: Outdoor preset, model flies ON. Point the drone at open ground first. Take over with a stick at any time.
+
+envelope:
+  floor_m: 15
+  ceiling_m: 90
+  max_vertical_mps: 1.0
+  max_horizontal_mps: 2.0
+  yaw_rate_dps: 20
+  gimbal_step_deg: 15
+  gimbal_min_deg: -90
+  gimbal_max_deg: 0
+  geofence_radius_m: 10
+  command_rate_hz: 1.0
+  hold_on_stale_s: 3.0
+
+policy:
+  target_altitude_m: 30
+  action_vocab: [forward, hold]
+  prompt: "Fence test. Reply with one word: forward or hold."
+  max_new_tokens: 4
+  image_max_side_px: 448
+
+steering: {enabled: false, target: altitude, layer: null, delta: 0.0, positions: all}
+logging: {session_dir: flights}

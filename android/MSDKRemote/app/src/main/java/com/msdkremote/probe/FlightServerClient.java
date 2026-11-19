@@ -42,6 +42,16 @@ public class FlightServerClient
         public double commandRateHz = 1.0;
         public double holdOnStaleS = 3.0;
         public double targetAltitudeM = Double.NaN;
+        /** 0 when the server never commands travel, turns or camera tilt. */
+        public double maxHorizontalMps = 0.0;
+        public double yawRateDps = 0.0;
+        public double gimbalStepDeg = 0.0;
+        public double gimbalMinDeg = -90.0;
+        public double gimbalMaxDeg = 0.0;
+        /** NaN when the server sets no geofence. */
+        public double geofenceRadiusM = Double.NaN;
+        public String actionVocab = "";
+        public int taskCount = 0;
         public boolean tokenRequired = false;
         public long rttMs = 0;
     }
@@ -50,7 +60,14 @@ public class FlightServerClient
     public static class Act
     {
         public String action = "hold";
+        /** What the model asked for, before the server's envelope. */
+        public String chosen = "";
+        public String taskId = "";
         public double verticalMps = 0.0;
+        public double forwardMps = 0.0;
+        public double rightMps = 0.0;
+        public double yawDps = 0.0;
+        public double gimbalDeltaDeg = 0.0;
         public String rawText = "";
         public String note = "";
         public double probeReadout = Double.NaN;
@@ -102,6 +119,8 @@ public class FlightServerClient
             health.serverTimeS = json.optDouble("server_time", Double.NaN);
             health.targetAltitudeM = json.optDouble("target_altitude_m", Double.NaN);
             health.tokenRequired = json.optBoolean("token_required", false);
+            health.taskCount = json.optInt("n_tasks", 0);
+            health.actionVocab = String.valueOf(json.opt("action_vocab"));
 
             JSONObject envelope = json.optJSONObject("envelope");
             if (envelope != null) {
@@ -110,6 +129,12 @@ public class FlightServerClient
                 health.maxVerticalMps = envelope.optDouble("max_vertical_mps", Double.NaN);
                 health.commandRateHz = envelope.optDouble("command_rate_hz", 1.0);
                 health.holdOnStaleS = envelope.optDouble("hold_on_stale_s", 3.0);
+                health.maxHorizontalMps = envelope.optDouble("max_horizontal_mps", 0.0);
+                health.yawRateDps = envelope.optDouble("yaw_rate_dps", 0.0);
+                health.gimbalStepDeg = envelope.optDouble("gimbal_step_deg", 0.0);
+                health.gimbalMinDeg = envelope.optDouble("gimbal_min_deg", -90.0);
+                health.gimbalMaxDeg = envelope.optDouble("gimbal_max_deg", 0.0);
+                health.geofenceRadiusM = envelope.optDouble("geofence_radius_m", Double.NaN);
             }
             return health;
         }
@@ -191,21 +216,28 @@ public class FlightServerClient
             Act act = new Act();
             act.rttMs = System.currentTimeMillis() - t0;
             act.action = json.optString("action", "hold");
-            act.verticalMps = json.optDouble("vertical_mps", 0.0);
+            act.chosen = json.optString("chosen", act.action);
+            act.taskId = json.optString("task_id", "");
+            act.verticalMps = finite(json.optDouble("vertical_mps", 0.0));
+            act.forwardMps = finite(json.optDouble("forward_mps", 0.0));
+            act.rightMps = finite(json.optDouble("right_mps", 0.0));
+            act.yawDps = finite(json.optDouble("yaw_dps", 0.0));
+            act.gimbalDeltaDeg = finite(json.optDouble("gimbal_delta_deg", 0.0));
             act.rawText = json.optString("raw_text", "");
             act.note = json.optString("note", "");
             act.probeReadout = json.optDouble("probe_readout", Double.NaN);
             act.steerDelta = json.optDouble("steer_delta", 0.0);
             act.serverMs = json.optDouble("server_ms", Double.NaN);
 
-            if (!Double.isFinite(act.verticalMps))
-                act.verticalMps = 0.0;
-
             return act;
         }
         finally {
             connection.disconnect();
         }
+    }
+
+    private static double finite(double value) {
+        return Double.isFinite(value) ? value : 0.0;
     }
 
     private HttpURLConnection open(String path) throws IOException

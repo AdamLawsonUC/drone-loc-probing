@@ -1,0 +1,45 @@
+# Indoor test of the wider action set: the model may climb, descend, turn and tilt the camera.
+# No travel indoors: there is no GPS, so there can be no geofence, so horizontal speed is zero.
+#   docker/run_server.sh --policy pattern      --config configs/flight_indoor_explore.yaml --save-frames --session <name>
+#   docker/run_server.sh --model qwen2.5-vl-7b --config configs/flight_indoor_explore.yaml --save-frames --save-activations --session <name>
+# App: Indoor preset.
+
+envelope:
+  floor_m: 1.0
+  ceiling_m: 2.2
+  max_vertical_mps: 0.2
+  max_horizontal_mps: 0.0
+  yaw_rate_dps: 20
+  gimbal_step_deg: 15
+  gimbal_min_deg: -90
+  gimbal_max_deg: 0
+  command_rate_hz: 1.0
+  hold_on_stale_s: 3.0
+
+policy:
+  target_altitude_m: 1.5
+  action_vocab: [turn_left, turn_right, climb, descend, tilt_down, tilt_up, hold]
+  prompt: >-
+    You are flying a small camera drone indoors. Your current task: {task}
+    Look at the camera image and choose the single next move. Reply with exactly one of these words:
+    turn_left, turn_right, climb, descend, tilt_down, tilt_up, hold.
+  max_new_tokens: 6
+  image_max_side_px: 448
+
+tasks:
+  - {id: climb_high,   seconds: 20, instruction: "Climb until the drone is close to the ceiling, then hold."}
+  - {id: look_around,  seconds: 30, instruction: "Turn on the spot to look all the way around."}
+  - {id: camera_down,  seconds: 15, instruction: "Tilt the camera down until it points straight at the floor."}
+  - {id: descend_low,  seconds: 20, instruction: "Descend until the drone is about one metre above the floor, then hold."}
+  - {id: camera_level, seconds: 15, instruction: "Tilt the camera up until it looks straight ahead."}
+  - {id: look_around,  seconds: 30, instruction: "Turn on the spot to look all the way around."}
+
+steering:
+  enabled: false
+  target: altitude
+  layer: null
+  delta: 0.0
+  positions: all
+
+logging:
+  session_dir: flights

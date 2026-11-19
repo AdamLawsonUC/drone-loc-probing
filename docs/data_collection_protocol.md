@@ -1,131 +1,132 @@
-# Data collection protocol: outdoor flights
+# Data collection protocol: flights where the model flies
 
-Version 1, 19 Nov 2026. For the DJI Mini 3 with the "Probe flight" screen and the flight server on wolfgang.
-Follow it from the first outing: flights flown this way are usable as experiment data, including the test flights.
+Version 2, 19 Nov 2026. For the DJI Mini 3 with the "Probe flight" screen and the flight server on wolfgang.
+Version 1 had the pilot flying while the model watched; that is now only a fallback (section 9).
 
-What every frame must end up with: the image the model saw, the model's activations, and the drone's own
-reading of height, heading, camera pitch and GPS position. The server stores all of that when it is started with
-`--save-frames --save-activations`. Nothing recorded by DJI Fly can be used; DJI Fly must stay closed.
+Principle: the model is in control whenever the drone is in the air and nothing is wrong. Qwen sees the camera
+picture and a task, and chooses every move: travel, turn, climb, descend, camera tilt. The pilot takes off, hands
+over, watches, takes over if needed, and lands. Every frame is stored with the image, the model's activations,
+the move it chose, the task it had, and the drone's own height, heading, camera pitch and GPS position.
 
-## 0. Before leaving (once per outing)
+Status: the server side is tested in software, including the geofence. The app side is type-checked but has not
+flown. Sections 3 and 4 are the tests that have to pass before a model flight counts.
 
-- [ ] Network path chosen and tested where you will stand: uni Wi-Fi, or phone hotspot with the laptop on VPN
-- [ ] Laptop charged, set not to sleep; phone charged; three drone batteries
+## 1. How the pilot stays in charge
+
+| To do this | Do this |
+| --- | --- |
+| Take over at once | Move either stick on the controller. The run ends and the sticks are yours |
+| Stop and hover | Stop button in the app |
+| Land now | EMERGENCY LAND in the app |
+
+Limits the app enforces whatever the model says (outdoor config):
+
+- height between 15 and 90 m above the take-off point; the run ends if the drone gets 5 m outside that
+- travel at most 2 m/s, and never further out once it is 60 m from where Start was pressed; the run ends at 75 m
+- no travel at all without a GPS position
+- a lost link means hover; three failed requests end the run
+
+The model does not take off and does not land.
+
+## 2. Before leaving (once per outing)
+
+- [ ] Network path tested where you will stand (uni Wi-Fi, or hotspot with the laptop on VPN)
+- [ ] Laptop set not to sleep; phone, laptop and three drone batteries charged
+- [ ] The app on the phone is built from the current `android/MSDKRemote`
 - [ ] On wolfgang: `cd ~/drone-ego/drone-loc-probing && git pull && df -h . && docker ps`
-      (a 10 minute flight stores about 0.5 GB; stop any old `drone-loc-server` with `docker stop drone-loc-server`)
-- [ ] Session names written down in advance (section 2), so nothing is typed from memory in the field
-- [ ] Paper or phone notes ready for section 7
+      (stop any old server with `docker stop drone-loc-server`; a 10 minute flight stores about 0.5 GB)
+- [ ] Session names written down (section 5)
 
-## 1. Setting up at the site (every outing)
-
-On the laptop, two PowerShell windows:
+Setting up at the site: two PowerShell windows on the laptop.
 
 ```
 ssh -N -g -L 8765:localhost:8765 adaml@wolfgang.ise.canberra.edu.au      # window 1: the tunnel, leave it open
 ssh adaml@wolfgang.ise.canberra.edu.au                                     # window 2: where you run the server
 ```
 
-In window 2, start the server inside tmux, so it survives a dropped connection:
+In window 2: `cd ~/drone-ego/drone-loc-probing`, then `tmux new -s flight` so the server survives a dropped
+connection (`tmux attach -t flight` gets it back). Then `ipconfig` on the laptop and put
+`http://<Wi-Fi IPv4 address>:8765` in the app. DJI Fly closed. Drone on flat ground at the take-off point, GPS
+locked (10 or more satellites). Take off from the ground: logged height is height above that point.
+
+## 3. Indoor test of the new controls (once, before the first outing)
+
+The model cannot travel indoors (no GPS, so no fence), but turning, camera tilt and stick takeover can be tested.
 
 ```
-cd ~/drone-ego/drone-loc-probing
-tmux new -s flight          # if it says a session exists: tmux attach -t flight
+docker/run_server.sh --policy pattern --config configs/flight_indoor_explore.yaml --save-frames --session <date>_lab_axes01
 ```
 
-If the connection drops, log in again and run `tmux attach -t flight`; the server will still be running.
-(If tmux is not installed, run the server directly and keep window 2 open.)
+App: Indoor preset. Take off, hover at about 1.5 m, tick "Model flies", Start.
 
-Then:
+| Check | Pass |
+| --- | --- |
+| Stick takeover, first | nudge a stick: the app says "Pilot took over" and the sticks work. If the run ends by itself with that message when you did NOT touch a stick, stop and tell |
+| Turn | the drone turns left, pauses, turns right |
+| Climb and descend | as before |
+| Camera tilt | the picture tilts down, then up; if the log says the gimbal ignored a rotation, note it |
+| Stop | hover, sticks work |
 
-1. `ipconfig` on the laptop; put `http://<Wi-Fi IPv4 address>:8765` in the app's server field.
-2. Drone and controller on, DJI Fly closed, our app open on the Probe flight screen.
-3. Put the drone on flat ground at the take-off point. Wait for a GPS lock (the drone's lights, and 10 or more
-   satellites). Take off from the ground, not from a table or a slope: logged height is height above this point.
-4. Roll the gimbal wheel and check the picture in the app tilts.
+## 4. First outing: tests, in this order
 
-## 2. Session names
+App preset: Outdoor. `Ctrl+C` stops the server between sessions.
 
-One name per server start, never reused: `<date>_<site>_<kind><nn>`
-
-| Kind | Meaning | Example |
-| --- | --- | --- |
-| `check` | link check on the ground | `1121_oval_check01` |
-| `noise` | stationary noise-floor log | `1121_oval_noise01` |
-| `obs` | observe flight: you fly, the model watches | `1121_oval_obs01` |
-| `pattern`, `baro`, `qwen` | closed-loop tests | `1121_oval_qwen01` |
-
-Site names so far: `oval`, `field`, `campus`, `carpark`. A site is a place that looks different from the others;
-two ovals side by side are one site. Add `am` or `pm` to your notes, not to the name.
-
-## 3. First outing only: tests, in this order
-
-Run each command in the tmux window. `Ctrl+C` stops the server between sessions. App preset: Outdoor.
-
-| # | Server command (after `docker/run_server.sh`) | Stick commands | What to do | Pass |
+| # | Server command (after `docker/run_server.sh`) | Model flies | What to do | Pass |
 | --- | --- | --- | --- | --- |
-| 1 | `--policy pattern --save-frames --session <check name>` | off | Test connection, Start, 10 lines, Stop | lines appear; note the round trip time |
-| 2 | `--policy pattern --save-frames --session <noise name>` | off | Start; leave the drone on the ground, motors off, for 10 minutes; Stop | about 600 lines |
-| 3 | observe flight, section 4 | off | fly the pattern | section 5 checks pass |
-| 4 | `--policy pattern --save-frames --session <pattern name>` | on | Take off, climb to 20 m by hand, Start, one full cycle, Stop | climbs, holds, descends, holds |
-| 5 | `--policy baro --save-frames --session <baro name>` | on | Start from about 20 m; Stop; Start from about 40 m | settles near 30 m both times |
-| 6 | `--model qwen2.5-vl-7b --save-frames --save-activations --session <qwen name>` | on | Start from about 30 m, run 2 minutes, Stop | whatever happens is the result; note it |
+| 1 | `--policy pattern --config configs/flight_explore.yaml --save-frames --session <check name>` | off | Test connection, Start, 10 lines, Stop | lines appear; note the round trip |
+| 2 | same server, new Start | off | drone on the ground, motors off, 10 minutes, Stop | about 600 lines: the noise-floor log |
+| 3 | `--policy pattern --config configs/flight_fence_test.yaml --save-frames --session <fence name>` | on | Take off, climb to 20 m, point at open ground, Start | it flies forward in steps and stops about 10 m out with `at_fence` or `app_fence` in the lines |
+| 4 | `--policy pattern --config configs/flight_explore.yaml --save-frames --session <axes name>` | on | Take off, climb to 20 m, Start, one full cycle (about 80 s) | forward, back, left, right, turn left, turn right, climb, descend, tilt down, tilt up, each followed by a hold; it ends near where it began |
+| 5 | model flight, section 6 | on | | section 7 |
 
-Sessions 4 to 6 keep the drone between 15 and 60 m. If the app refuses to start, the drone is outside that band.
-Session 2 gives the GPS scatter and barometer drift that every probe error is later compared against.
+In sessions 3 and 4, test the stick takeover once each.
 
-## 4. The observe flight (the data)
+## 5. Session names
 
-Server:
+One name per server start, never reused: `<date>_<site>_<kind><nn>`, for example `1121_oval_model01`.
+Kinds: `check`, `fence`, `axes`, `model`. Sites so far: `oval`, `field`, `campus`, `carpark`. A site is a place
+that looks different from the others; two ovals side by side are one site.
 
-```
-docker/run_server.sh --model qwen2.5-vl-7b --config configs/flight_observe.yaml --save-frames --save-activations --session <obs name>
-```
-
-`flight_observe.yaml` sends two frames a second. If the round trip in the field is above about 400 ms, leave the
-`--config` part out; that gives one frame a second and is also fine.
-
-App: Outdoor, stick commands OFF. Press Start and wait for lines. Then Take off.
-
-Fly inside a box about 150 m across, slowly (walking to jogging pace), keeping the drone in sight.
-One battery, about 9 minutes:
-
-| Block | Camera | Height | What to fly | About |
-| --- | --- | --- | --- | --- |
-| A1 | straight down | 20 m | two passes across the box, 30 m apart, then one slow full turn on the spot | 90 s |
-| A2 | straight down | 50 m | the same | 90 s |
-| A3 | straight down | 90 m | the same | 90 s |
-| B1 | 45 degrees down | 90 m | the same | 90 s |
-| B2 | 45 degrees down | 50 m | the same | 90 s |
-| B3 | 45 degrees down | 20 m | the same | 90 s |
-| C | 45 degrees down | 20 m to 90 m | one slow steady climb, hovering over the middle of the box | 40 s |
-| D | sweep | 50 m | roll the camera slowly from level to straight down and back | 30 s |
-
-Rules that keep the data usable:
-
-- Hold each height steady during a block; the climbs between blocks are useful too, so do not hurry them.
-- Make the full turn slow, 30 seconds or more, so every heading is seen.
-- Do not stop the app between blocks. One Start for the whole flight.
-- After landing, wait 10 seconds before pressing Stop. The height the drone reports on the ground after landing
-  is the barometer drift for that flight.
-- If the app stops by itself (link lost), land, press Start again and carry on. The server keeps numbering.
-- A second battery at the same site: keep the same server running and the same session, press Start again.
-
-## 5. Check before leaving the site (2 minutes, window 2, a second tmux pane or after `Ctrl+C`)
+## 6. The model flight (the data)
 
 ```
-ls flights/<obs name>/frames | wc -l
-ls flights/<obs name>/activations | wc -l
-docker/run.sh scripts/61_sessions_to_manifest.py --sessions <obs name> --site <site> --out data/check.csv
+docker/run_server.sh --model qwen2.5-vl-7b --config configs/flight_explore.yaml --save-frames --save-activations --session <model name>
 ```
 
-Good looks like: the two counts equal and in the hundreds (about 540 at one frame a second, about 1,000 at two);
-`kept` close to the count; `alt` from about 20 to about 90 m; `pitch` from about -90 to about -45 or higher;
-`gps` near 100%. If height, pitch or GPS is wrong, fly it again now; it is much cheaper than coming back.
+1. App: Outdoor, "Model flies" OFF, press Start and wait for lines. Stop. (This warms the model up; the first
+   reply takes two seconds.)
+2. Take off. Climb to about 20 m by hand, over the middle of the area you want it to stay in. The fence is a
+   60 m circle around this point, so stand where you can see all of it.
+3. Tick "Model flies", Start, confirm.
+4. Let it run one full pass of the task schedule, 7 minutes 30 seconds. The tasks, in order: climb high, look
+   around, camera down, explore, descend to mid height, look around, camera level, explore, descend low, camera
+   down, explore. The current task shows in each line of the app.
+5. Take over with a stick, press Land, and after it is on the ground wait 10 seconds. (The height it reports on
+   the ground is the barometer drift for the flight.)
 
-## 6. The collection plan
+Take over early only if something is wrong. Odd but safe behaviour, such as sitting at the fence, circling, or
+ignoring the task, is a result: leave it running and write it down.
 
-Per site: two visits at different times of day, at least three hours apart (shadows must not give away heading).
-Each visit is one observe flight. A site is finished after two good visits.
+If the run ends by itself (link lost, fence margin, height margin): the drone hovers and you have control. Fly
+back to the middle, press Start again. The server keeps numbering, and the schedule restarts from the top.
+
+## 7. Check before leaving the site (window 2, after `Ctrl+C`)
+
+```
+ls flights/<model name>/frames | wc -l
+ls flights/<model name>/activations | wc -l
+docker/run.sh scripts/61_sessions_to_manifest.py --sessions <model name> --site <site> --out data/check.csv
+docker/run.sh -c "import pandas as pd; d=pd.read_csv('flights/<model name>/commands.csv'); print(d.chosen.value_counts()); print(d.note.fillna('').value_counts())"
+```
+
+Good looks like: the two counts equal, about 450 for one pass; `model flying` near 100%; `gps` near 100%.
+The height, pitch and heading ranges, and the count of each move, show how much of the pose range the model
+covered by itself. Narrow ranges are not a failed flight, but tell, because the probes need the range and
+the task schedule may need changing.
+
+## 8. The collection plan
+
+Per site: two visits at different times of day, at least three hours apart, one model flight each.
 
 | Site | Type for the paper | Visit 1 | Visit 2 |
 | --- | --- | --- | --- |
@@ -134,46 +135,47 @@ Each visit is one observe flight. A site is finished after two good visits.
 | carpark | repetitive built-up | | |
 | field (different surroundings from the oval) | natural or repetitive | | |
 
-The experiment needs eight to ten sites in the end, with at least one natural, one over or beside water and one on
-a slope. The campus gives three or four. The rest come later; the same protocol applies anywhere.
+The experiment needs eight to ten sites in the end, with at least one natural, one beside water and one on a
+slope. The campus gives three or four.
 
-Optional at each site, if a battery is spare: the Qwen closed-loop run from section 3, row 6, for two minutes.
-
-## 7. Notes to write down for every session
+After each outing, once per model session:
 
 ```
-session: 1121_oval_obs01
+docker/run.sh scripts/61_sessions_to_manifest.py --sessions <model name> --site <site> --out data/manifest_real.csv --append
+```
+
+## 9. Fallback: observe flight
+
+If the model cannot produce usable coverage at a site, the same session can be flown by hand with "Model flies"
+OFF: the model still sees every frame, chooses a move and has its activations stored, but nothing it chooses
+reaches the drone. The manifest marks those frames as `model_in_control = False`, so they are never mixed up
+with frames where the model was flying.
+
+## 10. Notes to write down for every session
+
+```
+session: 1121_oval_model01
 date: 2026-11-21
 local_time_start: "09:40"
 site: oval
-take_off_point: "north-west corner of the oval, on the grass"
+take_off_point: "centre circle of the oval, on the grass"
 weather: "clear"
 wind: "light, from the west"
 pilot: Adam Lawson
-network: "uni Wi-Fi" 
+network: "uni Wi-Fi"
 round_trip_ms: 180
-battery: 1
-blocks_flown: [A1, A2, A3, B1, B2, B3, C, D]
+takeovers: 0          # how many times you took over, and why
+what_the_model_did: "climbed to about 60 m, turned twice, drifted north to the fence during explore"
 height_on_ground_after_landing_m: 0.3
 anything_odd: ""
 ```
 
-Save it afterwards as `flights/<session>/notes.yaml` on wolfgang. The pilot name, weather and take-off point are
-needed for the dataset description in the paper.
-
-## 8. After each outing (wolfgang)
-
-```
-docker/run.sh scripts/61_sessions_to_manifest.py --sessions <obs name> --site <site> --out data/manifest_real.csv --append
-```
-
-Run it once per observe session, with that session's site. Then tell the session names and sites.
-Back up `flights/` off wolfgang when convenient; frames and activations are not in git.
+Save it as `flights/<session>/notes.yaml` on wolfgang.
 
 ## Limits to know about
 
-- Images are stored at 640 pixels wide and the model sees them at 448. That is the dataset; there is no
-  full-resolution video unless a separate recording is made.
-- Height is relative to the take-off point. On flat ground that is height above ground. On a slope it is not, and
-  that site will need the terrain correction later; note the take-off point carefully there.
-- Heading is the compass heading. If the app or drone asks for a compass calibration, do it before the flight.
+- The model is never told its height, heading or camera angle. It gets the picture and the task.
+- One move a second, at fixed speeds. It is coarse control by design.
+- Images are stored at 640 pixels wide and the model sees them at 448.
+- Height is relative to the take-off point. On a slope that is not height above ground.
+- Heading is the compass heading. Do a compass calibration if the drone asks for one.

@@ -143,8 +143,8 @@ public class ProbeFlightActivity extends AppCompatActivity implements ProbeFligh
         setRunningUi(false);
         appendLog("1. Start the flight server on wolfgang.\n"
                 + "2. Test connection.\n"
-                + "3. Stick commands off: Start, Take off, fly with the controller (observe).\n"
-                + "4. Stick commands on: Take off, fly into the envelope, Start (server holds height).");
+                + "3. Take off, fly into the envelope, tick 'Model flies', Start.\n"
+                + "4. To take over: move a stick on the controller, or press Stop.");
     }
 
     private View buildLayout()
@@ -181,7 +181,7 @@ public class ProbeFlightActivity extends AppCompatActivity implements ProbeFligh
         root.addView(group, matchWrap());
 
         checkSticks = new CheckBox(this);
-        checkSticks.setText("Send stick commands (off = bench test, nothing reaches the aircraft)");
+        checkSticks.setText("Model flies the drone (off = observe only, nothing reaches the aircraft)");
         checkSticks.setChecked(false);
         root.addView(checkSticks, matchWrap());
 
@@ -367,10 +367,10 @@ public class ProbeFlightActivity extends AppCompatActivity implements ProbeFligh
         }
 
         new AlertDialog.Builder(this)
-                .setTitle("Hand the vertical axis to the server?")
+                .setTitle("Let the model fly?")
                 .setMessage("Preset " + preset + ".\n\nThe drone must already be flying inside the "
-                        + "envelope. The server will command climb, hold or descend. Stop returns "
-                        + "control to the remote controller.")
+                        + "envelope. The server will command every move its config allows. To take "
+                        + "over, move a stick on the controller or press Stop.")
                 .setPositiveButton("Start", (dialog, which) -> startRun(preset, true))
                 .setNegativeButton("Cancel", null)
                 .show();
@@ -385,7 +385,7 @@ public class ProbeFlightActivity extends AppCompatActivity implements ProbeFligh
 
         if (runner.start()) {
             setRunningUi(true);
-            appendLog("--- run started (" + preset.name + (sticks ? ", sticks ON" : ", bench") + ") ---");
+            appendLog("--- run started (" + preset.name + (sticks ? ", MODEL FLIES" : ", observe") + ") ---");
         }
     }
 

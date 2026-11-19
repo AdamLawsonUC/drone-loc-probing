@@ -1,0 +1,54 @@
+# Outdoor flights where the model flies: it chooses every move (travel, turn, climb, descend, camera tilt).
+# The pilot takes off and lands, and takes over by moving a stick, pressing Stop, or EMERGENCY LAND.
+#   docker/run_server.sh --model qwen2.5-vl-7b --config configs/flight_explore.yaml --save-frames --save-activations --session <name>
+#   docker/run_server.sh --policy pattern      --config configs/flight_explore.yaml --save-frames --session <name>   # axis test, no model
+# App: Outdoor preset, stick commands ON. The app enforces the same limits and refuses to start if they disagree.
+
+envelope:
+  floor_m: 15              # height above the take-off point
+  ceiling_m: 90
+  max_vertical_mps: 1.0    # speed of a climb or descend move
+  max_horizontal_mps: 2.0  # speed of a forward, back, left or right move
+  yaw_rate_dps: 20         # speed of a turn
+  gimbal_step_deg: 15      # size of one camera tilt
+  gimbal_min_deg: -90      # straight down
+  gimbal_max_deg: 0        # level
+  geofence_radius_m: 60    # horizontal distance from where Start was pressed; no move may carry the drone further out
+  command_rate_hz: 1.0
+  hold_on_stale_s: 3.0
+
+policy:
+  target_altitude_m: 30
+  action_vocab: [forward, back, left, right, turn_left, turn_right, climb, descend, tilt_down, tilt_up, hold]
+  # The model gets the picture and the task, nothing else. In particular it is never told its height, heading or
+  # camera angle: whatever it knows about them it has to get from the image.
+  prompt: >-
+    You are flying a small camera drone. Your current task: {task}
+    Look at the camera image and choose the single next move. Reply with exactly one of these words:
+    forward, back, left, right, turn_left, turn_right, climb, descend, tilt_down, tilt_up, hold.
+  max_new_tokens: 6
+  image_max_side_px: 448
+
+# One pass is 7 minutes 30 seconds; the schedule then repeats. Times are since Start was pressed in the app.
+tasks:
+  - {id: climb_high,   seconds: 60, instruction: "Climb until the drone is high above the ground, about 80 metres up, then hold."}
+  - {id: look_around,  seconds: 40, instruction: "Turn on the spot to look all the way around."}
+  - {id: camera_down,  seconds: 20, instruction: "Tilt the camera down until it points straight at the ground."}
+  - {id: explore,      seconds: 60, instruction: "Fly slowly over the ground below and explore the area."}
+  - {id: descend_mid,  seconds: 40, instruction: "Descend until the drone is about 50 metres above the ground, then hold."}
+  - {id: look_around,  seconds: 30, instruction: "Turn on the spot to look all the way around."}
+  - {id: camera_level, seconds: 20, instruction: "Tilt the camera up until you can see the horizon."}
+  - {id: explore,      seconds: 60, instruction: "Fly slowly over the ground below and explore the area."}
+  - {id: descend_low,  seconds: 40, instruction: "Descend until the drone is about 20 metres above the ground, then hold."}
+  - {id: camera_down,  seconds: 20, instruction: "Tilt the camera down until it points straight at the ground."}
+  - {id: explore,      seconds: 60, instruction: "Fly slowly over the ground below and explore the area."}
+
+steering:
+  enabled: false
+  target: altitude
+  layer: null
+  delta: 0.0
+  positions: all
+
+logging:
+  session_dir: flights
