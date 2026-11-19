@@ -26,13 +26,14 @@ policy:
   max_new_tokens: 6
   image_max_side_px: 448
 
+# target is not shown to the model. It is what 63_score_commands.py marks each move and each task against.
 tasks:
-  - {id: climb_high,   seconds: 20, instruction: "Climb until the drone is close to the ceiling, then hold."}
-  - {id: look_around,  seconds: 30, instruction: "Turn on the spot to look all the way around."}
-  - {id: camera_down,  seconds: 15, instruction: "Tilt the camera down until it points straight at the floor."}
-  - {id: descend_low,  seconds: 20, instruction: "Descend until the drone is about one metre above the floor, then hold."}
-  - {id: camera_level, seconds: 15, instruction: "Tilt the camera up until it looks straight ahead."}
-  - {id: look_around,  seconds: 30, instruction: "Turn on the spot to look all the way around."}
+  - {id: climb_high,   seconds: 20, instruction: "Climb until the drone is close to the ceiling, then hold.", target: {altitude_m: 2.0, tol: 0.2}}
+  - {id: look_around,  seconds: 30, instruction: "Turn on the spot to look all the way around.", target: {yaw_sweep_deg: 360}}
+  - {id: camera_down,  seconds: 15, instruction: "Tilt the camera down until it points straight at the floor.", target: {gimbal_pitch_deg: -90, tol: 10}}
+  - {id: descend_low,  seconds: 20, instruction: "Descend until the drone is about one metre above the floor, then hold.", target: {altitude_m: 1.1, tol: 0.2}}
+  - {id: camera_level, seconds: 15, instruction: "Tilt the camera up until it looks straight ahead.", target: {gimbal_pitch_deg: 0, tol: 10}}
+  - {id: look_around,  seconds: 30, instruction: "Turn on the spot to look all the way around.", target: {yaw_sweep_deg: 360}}
 
 steering:
   enabled: false

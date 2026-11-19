@@ -15,6 +15,9 @@ Produces, in results/<run_id>/:
                     weights on raw img_mean activations, fitted on all frames: w, b, alpha, encoding, position.
                     This is the file 80_flight_server.py and the patching scripts load.
   best_layers.csv   best layer per target, position and prompt, by the headline metric
+  predictions/L<XX>_<position>_<prompt>_<split>.npz
+                    the held-out probe reading for every frame (frame_id, <target>_pred, <target>_true), for
+                    comparing what the probe read with what the model then did
   alpha_edges.txt   written only if the alpha search hit the edge of the grid somewhere
 
 Notes
@@ -126,6 +129,7 @@ def main() -> None:
     base0 = {"model": store.model, "split": args.split, "source": store.source, "probe": "ridge", "seed": args.seed}
     out_csv = run / "probes.csv"
     probes_dir = common.ensure_dir(run / "probes")
+    preds_dir = common.ensure_dir(run / "predictions")
     all_rows, edges = [], []
     t0 = time.time()
     for li, layer in enumerate(layers):
@@ -144,6 +148,12 @@ def main() -> None:
                 for t in group:
                     all_rows += pl.score_rows({**base, "split": split_name}, t, oof[t.name], fold_of, clusters, atab,
                                               args.bootstrap_n, args.seed, per_fold=(split_name == args.split))
+                # held-out prediction for every frame, in the probe's own units (log metres for altitude, sin and
+                # cos for angles): what the probe read on a frame it was not trained on
+                np.savez(preds_dir / f"L{layer:02d}_{position}_{prompt}_{split_name}.npz",
+                         frame_id=man.frame_id.to_numpy().astype(str), fold=fold_of.astype(str),
+                         **{f"{t.name}_pred": oof[t.name].astype(np.float32) for t in group},
+                         **{f"{t.name}_true": t.Y.astype(np.float32) for t in group})
             # weights for reuse: img_mean only, fitted on every frame at the typical chosen alpha
             if position == "img_mean" and not args.no_weights and main_specs:
                 grp = [t for t in main_specs if t.name in tnames]
