@@ -255,6 +255,7 @@ class Server:
         self.cfg = cfg
         self.session = session
         self.token = token
+        self.feedback = ""
         self.n_calls = 0      # frames received in this session, across app restarts and server restarts
         self.t_start = time.time()
         self.last_cmd_time = 0.0
@@ -279,10 +280,14 @@ class Server:
         "climb": (0, 0, 1, 0, 0), "descend": (0, 0, -1, 0, 0),
         "forward": (1, 0, 0, 0, 0), "back": (-1, 0, 0, 0, 0),
         "right": (0, 1, 0, 0, 0), "left": (0, -1, 0, 0, 0),
+        # the same sideways moves under names a model does not read as turning (flight 1121_oval_model01: asked to
+        # look around, Qwen answered "left" forty times and slid to the fence without ever turning)
+        "slide_right": (0, 1, 0, 0, 0), "slide_left": (0, -1, 0, 0, 0),
         "turn_right": (0, 0, 0, 1, 0), "turn_left": (0, 0, 0, -1, 0),
         "tilt_up": (0, 0, 0, 0, 1), "tilt_down": (0, 0, 0, 0, -1),
     }
-    TRAVEL_DIRECTION_DEG = {"forward": 0.0, "right": 90.0, "back": 180.0, "left": 270.0}
+    TRAVEL_DIRECTION_DEG = {"forward": 0.0, "right": 90.0, "slide_right": 90.0, "back": 180.0, "left": 270.0,
+                            "slide_left": 270.0}
 
     def vocab(self) -> list:
         return [a for a in self.cfg["policy"].get("action_vocab", ["climb", "hold", "descend"]) if a in self.MOVES]
@@ -361,7 +366,10 @@ class Server:
         t0 = time.time()
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         task_id, task_text = self.current_task(telemetry)
-        instr = instruction or self.cfg["policy"]["prompt"].format(**{**self.cfg["policy"], "task": task_text})
+        if telemetry.get("seq") == 1:
+            self.feedback = ""                       # a new run in the app starts without history
+        instr = instruction or self.cfg["policy"]["prompt"].format(
+            **{**self.cfg["policy"], "task": task_text, "feedback": self.feedback})
         with self.lock:
             self.n_calls += 1
             seq = telemetry.get("seq", self.n_calls)
@@ -377,6 +385,12 @@ class Server:
                 np.savez(self.acts_dir / f"{self.n_calls:06d}.npz", instruction=instr, **acts)
             chosen = self.parse_action(raw)
             action, note = self.apply_envelope(chosen, telemetry)
+            # Tell the model, next frame, when the fence stopped it. Only the fence: saying it had reached a height
+            # or camera limit would hand it part of the state the probes are trying to read from the image.
+            if note == "at_fence" and self.cfg["policy"].get("fence_feedback"):
+                self.feedback = self.cfg["policy"]["fence_feedback"].format(move=chosen)
+            elif chosen != "hold":
+                self.feedback = ""
         env = self.cfg["envelope"]
         fwd, right, up, turn, tilt = self.MOVES[action]
         vertical = up * float(env["max_vertical_mps"])

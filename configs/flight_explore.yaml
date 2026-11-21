@@ -19,13 +19,25 @@ envelope:
 
 policy:
   target_altitude_m: 30
-  action_vocab: [forward, back, left, right, turn_left, turn_right, climb, descend, tilt_down, tilt_up, hold]
+  action_vocab: [forward, back, slide_left, slide_right, turn_left, turn_right, climb, descend, tilt_down, tilt_up, hold]
   # The model gets the picture and the task, nothing else. In particular it is never told its height, heading or
   # camera angle: whatever it knows about them it has to get from the image.
+  # Version 2 (21 Nov, after flight 1121_oval_model01): each word is explained, sideways moves are called slide_*
+  # so they are not mistaken for turning, and the model is told when the boundary stopped its last move.
   prompt: >-
     You are flying a small camera drone. Your current task: {task}
-    Look at the camera image and choose the single next move. Reply with exactly one of these words:
-    forward, back, left, right, turn_left, turn_right, climb, descend, tilt_down, tilt_up, hold.
+    {feedback}
+    Look at the camera image and choose the single next move. The moves are:
+    forward and back (fly straight ahead or straight backwards),
+    slide_left and slide_right (fly sideways without turning),
+    turn_left and turn_right (rotate on the spot, which changes where the camera looks),
+    climb and descend (change height),
+    tilt_down and tilt_up (tilt the camera),
+    hold (stay still).
+    Reply with exactly one of these words:
+    forward, back, slide_left, slide_right, turn_left, turn_right, climb, descend, tilt_down, tilt_up, hold.
+  fence_feedback: "Your last move, {move}, was blocked: the drone is at the edge of the area it may fly in. Go a different way."
+  prompt_version: 2
   max_new_tokens: 6
   image_max_side_px: 448
 
@@ -33,11 +45,11 @@ policy:
 # target is not shown to the model. It is what 63_score_commands.py marks each move and each task against.
 tasks:
   - {id: climb_high,   seconds: 60, instruction: "Climb until the drone is high above the ground, about 80 metres up, then hold.", target: {altitude_m: 80, tol: 8}}
-  - {id: look_around,  seconds: 40, instruction: "Turn on the spot to look all the way around.", target: {yaw_sweep_deg: 360}}
+  - {id: look_around,  seconds: 40, instruction: "Rotate the drone on the spot through a full circle to look all the way around.", target: {yaw_sweep_deg: 360}}
   - {id: camera_down,  seconds: 20, instruction: "Tilt the camera down until it points straight at the ground.", target: {gimbal_pitch_deg: -90, tol: 10}}
   - {id: explore,      seconds: 60, instruction: "Fly slowly over the ground below and explore the area."}
   - {id: descend_mid,  seconds: 40, instruction: "Descend until the drone is about 50 metres above the ground, then hold.", target: {altitude_m: 50, tol: 8}}
-  - {id: look_around,  seconds: 30, instruction: "Turn on the spot to look all the way around.", target: {yaw_sweep_deg: 360}}
+  - {id: look_around,  seconds: 30, instruction: "Rotate the drone on the spot through a full circle to look all the way around.", target: {yaw_sweep_deg: 360}}
   - {id: camera_level, seconds: 20, instruction: "Tilt the camera up until you can see the horizon.", target: {gimbal_pitch_deg: 0, tol: 10}}
   - {id: explore,      seconds: 60, instruction: "Fly slowly over the ground below and explore the area."}
   - {id: descend_low,  seconds: 40, instruction: "Descend until the drone is about 20 metres above the ground, then hold.", target: {altitude_m: 20, tol: 5}}
