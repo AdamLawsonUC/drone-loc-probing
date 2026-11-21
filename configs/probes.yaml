@@ -33,7 +33,8 @@ probe:
   # alpha is added to X'X of standardised features (the sklearn convention), so it scales with the frame count.
   # With about 6,000 frames and 3,584 dimensions the useful range runs well above 1,000; the grid was widened
   # on 14 Nov 2026 (was [0.01, 0.1, 1, 10, 100, 1000]). Script 30 reports when the choice sits on an edge.
-  alphas: [1, 10, 100, 1000, 10000, 100000]
+  # 21 Nov: 0.01 and 0.1 added. With a single flight (a few hundred frames) the search sat on the lower edge, 1.
+  alphas: [0.01, 0.1, 1, 10, 100, 1000, 10000, 100000]
   cv_folds: 5
   standardise: true
   bootstrap_n: 1000

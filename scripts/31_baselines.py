@@ -89,7 +89,7 @@ def main() -> None:
     ap.add_argument("--source", default=None)
     ap.add_argument("--controls", nargs="+", default=pcfg["controls"], choices=["pixel", "vision_tower", "random_init", "shuffled"])
     ap.add_argument("--targets", nargs="+", default=["altitude", "heading", "pitch", "scene_xy"])
-    ap.add_argument("--split", default="scene_heldout", choices=["scene_heldout", "site_heldout", "within_scene"])
+    ap.add_argument("--split", default="scene_heldout", choices=["scene_heldout", "site_heldout", "within_scene", "time_block"])
     ap.add_argument("--probes_run", type=Path, default=None, help="results/<run_id> from script 30, for the G1 table")
     ap.add_argument("--layer_step", type=int, default=1)
     ap.add_argument("--shuffles", type=int, default=10)

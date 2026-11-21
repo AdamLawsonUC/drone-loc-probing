@@ -81,7 +81,7 @@ def main() -> None:
     ap.add_argument("--source", default=None, help="subfolder of --acts when there is more than one")
     ap.add_argument("--manifest", type=Path, default=None, help="default: the manifest recorded in index.json")
     ap.add_argument("--targets", nargs="+", default=["altitude", "heading", "pitch", "scene_xy"])
-    ap.add_argument("--split", default="scene_heldout", choices=["scene_heldout", "site_heldout", "within_scene"])
+    ap.add_argument("--split", default="scene_heldout", choices=["scene_heldout", "site_heldout", "within_scene", "time_block"])
     ap.add_argument("--positions", nargs="+", default=["img_mean", "last"])
     ap.add_argument("--prompts", nargs="+", default=["neutral", "targeted", "flight"],
                     help="flight = the last token under the flight prompt, from sessions recorded with --save-activations")
@@ -213,8 +213,9 @@ def main() -> None:
     for _, r in mlp.iterrows():
         if r.metric == pl.HEADLINE.get(next(t.enc for t in specs if t.name == r.target), "") or r.metric.startswith("mae"):
             print(f"  mlp check  {r.target:10s} L{int(r.layer):02d}  {r.metric} = {r.value:.3f} [{r.ci_lo:.3f}, {r.ci_hi:.3f}]")
-    print(f"\nnext: python scripts/31_baselines.py --manifest {man_path} --acts activations/ --probes_run results/{run.name} "
-          f"--controls pixel vision_tower random_init shuffled --out results/")
+    print(f"\nnext: docker/run.sh scripts/31_baselines.py --manifest {man_path} --acts activations/ --model {store.model} "
+          f"--split {args.split} --targets {' '.join(t.name for t in specs)} --controls pixel vision_tower shuffled "
+          f"--probes_run results/{run.name} --out results/")
     print(f"written {run}")
 
 

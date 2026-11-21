@@ -101,7 +101,7 @@ class Fold:
     inner_groups: np.ndarray     # group label per training row, for the alpha cross-validation
 
 
-def make_folds(man: pd.DataFrame, split: str, cv: int = 5, per_scene: bool = False) -> list[Fold]:
+def make_folds(man: pd.DataFrame, split: str, cv: int = 5, per_scene: bool = False, gap_s: float = 20.0) -> list[Fold]:
     """scene_heldout: leave one scene out, rotating over every scene. The inner alpha search also leaves whole
     scenes out when at least three training scenes remain, otherwise whole trajectories.
     within_scene: grouped k-fold over trajectories, all scenes pooled; or one model per scene with per_scene=True
@@ -126,6 +126,29 @@ def make_folds(man: pd.DataFrame, split: str, cv: int = 5, per_scene: bool = Fal
                 continue
             for j, (a, b) in enumerate(GroupKFold(k).split(sub, groups=traj[sub])):
                 folds.append(Fold(f"{s}/cv{j}", sub[a], sub[b], traj[sub[a]]))
+    elif split == "time_block":
+        # Each flight is cut into cv stretches in time order; fold j tests stretch j of every flight. Training
+        # frames within gap_s of a test stretch are dropped, so the probe is never tested on a frame taken a
+        # moment before or after one it trained on. Stricter than within_scene for a single flight; it still
+        # cannot help when the drone hovers in one place for minutes.
+        flight = man["flight_id"].to_numpy() if "flight_id" in man else scene
+        t = pd.to_numeric(man["timestamp"], errors="coerce").to_numpy() if "timestamp" in man else idx.astype(float)
+        block = np.zeros(len(man), dtype=int)
+        for f in pd.unique(flight):
+            sel = idx[flight == f]
+            order = sel[np.argsort(t[sel], kind="stable")]
+            block[order] = np.minimum(np.arange(len(order)) * cv // max(len(order), 1), cv - 1)
+        for j in range(cv):
+            te = idx[block == j]
+            if len(te) == 0:
+                continue
+            near = np.zeros(len(man), dtype=bool)
+            for f in pd.unique(flight[te]):
+                tt = t[te][flight[te] == f]
+                near |= (flight == f) & (t >= tt.min() - gap_s) & (t <= tt.max() + gap_s)
+            tr = idx[(block != j) & ~near]
+            if len(tr) >= 10:
+                folds.append(Fold(f"block{j}", tr, te, traj[tr]))
     elif split == "within_scene":
         k = min(cv, len(pd.unique(traj)))
         for j, (a, b) in enumerate(GroupKFold(k).split(idx, groups=traj)):
